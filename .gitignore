@@ -1,0 +1,44 @@
+# ===== 비밀정보 (반드시 제외) =====
+secrets.h
+*.secret
+*.key
+.env
+.env.*
+
+# ===== Arduino 빌드 산출물 =====
+build/
+*.hex
+*.bin
+*.elf
+*.eep
+*.lst
+*.map
+*.o
+*.d
+*.a
+
+# ===== Arduino IDE / CLI 임시 파일 =====
+.arduino15/
+.arduinoIDE/
+*.tmp
+
+# ===== VS Code (개인 설정은 제외, 공유는 포함) =====
+.vscode/*
+!.vscode/settings.json.example
+!.vscode/c_cpp_properties.json.example
+
+# ===== 운영체제 =====
+.DS_Store
+Thumbs.db
+desktop.ini
+ehthumbs.db
+
+# ===== 에디터/IDE =====
+*.swp
+*.swo
+*~
+.idea/
+
+# ===== 로컬 노트/메모 (선택) =====
+NOTES_LOCAL_*.md
+TODO_LOCAL.md
