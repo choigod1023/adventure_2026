@@ -23,6 +23,15 @@
 // 예: "서울", "강남", "잠실"
 #define SUBWAY_STATION "수유"
 
+// 지하철 역명 UTF-8 URL 인코딩 (API URL 안전 전송용)
+// "수유"   = %EC%88%98%EC%9C%A0
+// "서울"   = %EC%84%9C%EC%9A%B8
+// "강남"   = %EA%B0%95%EB%82%A8
+// "잠실"   = %EC%9E%A0%EC%8B%A4
+// "교대"   = %EA%B5%90%EB%8C%80
+// SUBWAY_STATION 변경 시 반드시 같이 갱신할 것.
+#define SUBWAY_STATION_ENC "%EC%88%98%EC%9C%A0"
+
 // C-ITS 교차로 ID (t-data 사이트에서 검색)
 // "" (빈 문자열)로 두면 전체 — 단, numOfRows=1 이어도 응답 크기 주의
 #define SPAT_ITST_ID ""
@@ -38,14 +47,12 @@
 #define PIN_PIR 2   // HC-SR505 보행자 감지
 #define PIN_RADAR 3 // RCWL-0516 차량 감지
 
-// 모드 스위치 (API ↔ 센서)
-#define PIN_MODE_SW 4 // HIGH = API 모드, LOW = 센서 모드
-
-// OLED 모듈 내장 4 버튼
-#define PIN_BTN_1 5 // 페이지 이동
-#define PIN_BTN_2 6 // 페이지 이동
-#define PIN_BTN_3 7 // 선택/확인
-#define PIN_BTN_4 8 // 뒤로/취소
+// 모드 선택 버튼 — 4개 버튼이 각각 하나의 모드를 직접 선택
+// (이전의 PIN_MODE_SW 스위치는 폐기됨. D4는 미사용)
+#define PIN_BTN_BUS 5    // ① 버스 도착 API 모드
+#define PIN_BTN_SUBWAY 6 // ② 지하철 도착 API 모드
+#define PIN_BTN_SPAT 7   // ③ C-ITS 신호등 API 모드
+#define PIN_BTN_SENSOR 8 // ④ 센서 의존 모드 (RCWL + SR505)
 
 // 스피커 출력 (PAM8610 입력측)
 #define PIN_SPK1_780HZ 9 // PWM 가능 핀
@@ -75,3 +82,12 @@
 
 // SPAT 응답에서 "비활성/점멸"을 의미하는 센티넬 값
 #define SPAT_SENTINEL 36001.0f
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  4. 하드웨어 부착 토글 (부품 도착 전 임시 비활성)
+//     부품 결선되면 0 → 1 로 바꾸기. 다른 코드 수정 불필요.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#define HAS_RCWL    0   // RCWL-0516 차량 감지 모듈 (D3)
+#define HAS_SPEAKER 0   // PAM8610 + 스피커 (D9 780Hz / D10 2kHz)
+// PIR(HC-SR505), OLED, 버튼 4개는 기본 활성으로 가정
