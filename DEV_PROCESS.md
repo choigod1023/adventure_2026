@@ -172,32 +172,30 @@ void loop() {
 
 ## Phase 3: 하드웨어 통합 (센서 도착 후)
 
-### 3-1. 핀맵
+### 3-1. 핀맵 (실측 PCB 스키매틱 기준)
 
-| 핀 | 연결 대상 | 방향 | 비고 |
-|----|-----------|------|------|
-| D2 | HC-SR505 OUT | INPUT | PIR 인체 감지 |
-| D3 | RCWL-0516 OUT | INPUT | 마이크로파 차량 감지 |
-| D4 | 모드 스위치 | INPUT | HIGH=API / LOW=센서 |
-| D5 | BTN_1 | INPUT_PULLUP | 페이지 이동 |
-| D6 | BTN_2 | INPUT_PULLUP | 페이지 이동 |
-| D7 | BTN_3 | INPUT_PULLUP | 선택/확인 |
-| D8 | BTN_4 | INPUT_PULLUP | 뒤로/취소 |
-| D9 | PAM8610 IN1 | OUTPUT (PWM) | 780Hz 경고음 |
-| D10 | PAM8610 IN2 | OUTPUT (PWM) | 2kHz 경고음 |
-| A4 | OLED SDA | I2C | 하드웨어 I2C |
-| A5 | OLED SCL | I2C | 하드웨어 I2C |
-| 5V | VCC (센서·OLED) | POWER | |
-| GND | GND (전체 공통) | POWER | |
+| 핀 | 연결 대상 | 커넥터 | 방향 | 비고 |
+|----|-----------|--------|------|------|
+| D2 | RCWL-0516 OUT | J8 | INPUT | 마이크로파 차량 감지 |
+| D5~ | HC-SR505 OUT | J11 | INPUT | PIR 인체 감지 |
+| D6~ | 오디오 출력 → R1 → C1 → GND | J9 | OUTPUT (PWM) | 단일 채널, 780/2kHz 시분할 교대 |
+| D8 | 모드 스위치 | J10 | INPUT | HIGH=API / LOW=센서 |
+| D18 (A4) | OLED SDA | J7 | I2C | 하드웨어 I2C |
+| D19 (A5) | OLED SCL | J7 | I2C | 하드웨어 I2C |
+| A0 (D14) | AUX (보조) | J9 | — | 예비 |
+| +5V | VCC (센서·OLED) | J1 | POWER | |
+| GND | GND (전체 공통) | J1/J6 | POWER | |
+
+> ⚠️ 오디오는 PAM8610 듀얼 채널이 아니라 **D6~ 단일 PWM → RC 로우패스(R1/C1) → 스피커** 구조.
+> 780Hz / 2kHz 듀얼톤은 1개 핀에서 **시간 분할(교대)** 로 출력한다.
 
 ### 3-2. 결선 순서
-1. **전원만** 먼저 (UNO R4 + 센서 쉴드 V5.0 + USB 5V)
-2. **OLED** (I2C SDA/SCL) → 화면 뜨면 OK
-3. **버튼 4개 + 스위치** → 시리얼 확인
-4. **PIR (HC-SR505)** → 1핀, 디지털 입력
-5. **레이다 (RCWL-0516)** → 1핀, 디지털 입력
-6. **PAM8610 + 스피커 2개** → **DC 12V 별도 전원 필수** (USB 5V로는 부족)
-7. (가변저항은 PAM8610 모듈에 내장 — 별도 결선 불필요)
+1. **전원만** 먼저 (UNO R4 + USB 5V)
+2. **OLED** (J7, I2C SDA=D18/SCL=D19) → 화면 뜨면 OK
+3. **모드 스위치** (J10, D8) → 시리얼 확인
+4. **PIR (HC-SR505)** (J11, D5~) → 1핀, 디지털 입력
+5. **레이다 (RCWL-0516)** (J8, D2) → 1핀, 디지털 입력
+6. **오디오** (J9, D6~ → R1 → C1 → GND) → 스피커 연결
 
 ### 3-2. 통합 테스트 시나리오 (4개 모드)
 - [ ] BTN_MODE 한 번씩 눌러서 4개 모드 순환 + OLED 표시 확인

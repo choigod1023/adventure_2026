@@ -28,28 +28,27 @@
 #define SPAT_ITST_ID ""
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-//  2. 핀 배치  (센서 도착 후 실측하며 조정)
+//  2. 핀 배치  (실측 PCB 스키매틱 기준)
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-// OLED (I2C - 센서 쉴드 V5.0 I2C 포트)
-//   SDA, SCL 은 보드 기본값 사용 (UNO R4: A4=SDA, A5=SCL)
+// OLED (I2C) — J7 커넥터 (display)
+//   UNO R4 WiFi 기본값: D18=SDA(=A4), D19=SCL(=A5)
+//   별도 핀 정의 불필요 (U8g2 하드웨어 I2C 사용)
 
 // 센서 입력
-#define PIN_PIR 2   // HC-SR505 보행자 감지
-#define PIN_RADAR 3 // RCWL-0516 차량 감지
+#define PIN_RADAR 2 // RCWL-0516 차량 감지 — J8
+#define PIN_PIR 5   // HC-SR505 보행자 감지 — J11
 
-// 모드 스위치 (API ↔ 센서)
-#define PIN_MODE_SW 4 // HIGH = API 모드, LOW = 센서 모드
+// 모드 스위치 (API ↔ 센서) — J10
+#define PIN_MODE_SW 8 // HIGH = API 모드, LOW = 센서 모드
 
-// OLED 모듈 내장 4 버튼
-#define PIN_BTN_1 5 // 페이지 이동
-#define PIN_BTN_2 6 // 페이지 이동
-#define PIN_BTN_3 7 // 선택/확인
-#define PIN_BTN_4 8 // 뒤로/취소
+// 스피커 출력 (단일 채널 PWM → R1→AUDIO_R→C1→GND RC 필터) — J9
+//   스키매틱상 오디오 출력은 D6~ 단일 채널.
+//   780Hz / 2kHz 듀얼톤은 이 1개 핀에서 시간 분할(교대) 출력으로 구현.
+#define PIN_SPK 6 // PWM 가능 핀 (단일 오디오 출력)
 
-// 스피커 출력 (PAM8610 입력측)
-#define PIN_SPK1_780HZ 9 // PWM 가능 핀
-#define PIN_SPK2_2KHZ 10 // PWM 가능 핀
+// AUX (J9 보조 — A0/D14, 필요 시 사용)
+#define PIN_AUX A0
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  3. 동작 파라미터
