@@ -42,13 +42,11 @@
 // 모드 스위치 (API ↔ 센서) — J10
 #define PIN_MODE_SW 8 // HIGH = API 모드, LOW = 센서 모드
 
-// 스피커 출력 (단일 채널 PWM → R1→AUDIO_R→C1→GND RC 필터) — J9
-//   스키매틱상 오디오 출력은 D6~ 단일 채널.
-//   780Hz / 2kHz 듀얼톤은 이 1개 핀에서 시간 분할(교대) 출력으로 구현.
-#define PIN_SPK 6 // PWM 가능 핀 (단일 오디오 출력)
-
-// AUX (J9 보조 — A0/D14, 필요 시 사용)
-#define PIN_AUX A0
+// 스피커 출력 (듀오벨: 저음 DAC + 고음 PWM → 하드웨어 저항 합산 → 모노 스피커) — J9
+//   A0(DAC) 사인파 저음 + D6~(PWM) 사각파 고음을 '동시' 출력해 한 스피커로 믹싱.
+//   UNO R4 WiFi 의 진짜 DAC 는 A0 한 개뿐 — 다른 용도로 쓰지 말 것.
+#define PIN_SPK_DAC A0 // DAC 사인 출력 — 저음 (TONE_FREQ_PRIMARY)
+#define PIN_SPK_PWM 6  // PWM 사각 출력 — 고음 (TONE_FREQ_SECONDARY)
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  3. 동작 파라미터
@@ -64,9 +62,9 @@
 #define WARN_PEDESTRIAN_SEC 3.0f // 보행자 신호 잔여 N초 미만 → 경고
 #define WARN_DURATION_MS 5000UL  // 위험 해소 후 N ms 유지
 
-// 톤 주파수
-#define TONE_FREQ_PRIMARY 780    // Hz (ANC 취약점)
-#define TONE_FREQ_SECONDARY 2000 // Hz (습관화 방지)
+// 톤 주파수 (듀오벨)
+#define TONE_FREQ_PRIMARY 780    // Hz — 저음, DAC 사인 (ANC 취약점 → 이어폰 뚫음)
+#define TONE_FREQ_SECONDARY 2000 // Hz — 고음, PWM 사각 (습관화 방지 → 귀 깨움)
 
 // 디바운스
 #define DEBOUNCE_MS 20
