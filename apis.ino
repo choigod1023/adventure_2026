@@ -320,9 +320,16 @@ void fetchSpat() {
   }
 
   JsonObject item = doc.as<JsonArray>()[0];
-  const char* itstId = item["itstId"] | "?";
+  const char* itstId = item["itstId"] | "?";   // 문자열 (예: "2691")
 
-  // 4방위 보행자 신호 잔여 중 최소값 사용
+  // ── 4방위 보행자 신호(Pdsg) 잔여 중 최소값 사용 ──
+  //  값 단위: 센티초(1/10초). null = 해당 방위에 보행 신호 없음.
+  //  36001(SPAT_SENTINEL) = 신호 미운영/점멸.
+  //
+  //  ⚠️ 한계: 이 엔드포인트는 "현재 페이즈의 잔여시간"만 주고,
+  //     그 페이즈가 보행 GREEN 인지 RED 인지 알려주는 필드가 없음.
+  //     → 잔여 < 임계값을 "곧 신호 바뀜 = 위험"으로 해석 (보수적 경고).
+  //     실배포 시 해당 교차로의 보행 페이즈 길이로 임계값 튜닝 권장.
   float minPed = SPAT_SENTINEL;
   const char* minDir = "?";
   struct { const char* dir; const char* key; } dirs[] = {
@@ -333,9 +340,11 @@ void fetchSpat() {
   };
   for (int i = 0; i < 4; i++) {
     JsonVariant v = item[dirs[i].key];
-    if (v.isNull()) continue;
+    Serial.print(F("  ")); Serial.print(dirs[i].dir); Serial.print(F(" 보행: "));
+    if (v.isNull()) { Serial.println(F("--")); continue; }
     float cs = v.as<float>();
-    if (cs >= SPAT_SENTINEL) continue;
+    if (cs >= SPAT_SENTINEL) { Serial.println(F("[미운영]")); continue; }
+    Serial.print(cs / 10.0f, 1); Serial.println(F("s"));
     if (cs < minPed) { minPed = cs; minDir = dirs[i].dir; }
   }
 
@@ -352,6 +361,9 @@ void fetchSpat() {
   snprintf(detail, sizeof(detail), "%s 보행 %d.%ds",
            minDir, (int)sec, (int)(sec * 10) % 10);
   bool danger = (sec < WARN_PEDESTRIAN_SEC);
+  Serial.print(F("  → 최소 ")); Serial.print(minDir);
+  Serial.print(F(" ")); Serial.print(sec, 1);
+  Serial.println(danger ? F("s [위험]") : F("s [정상]"));
   setDisplayValid(context, detail, danger);
 }
 
