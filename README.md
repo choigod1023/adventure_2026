@@ -93,6 +93,7 @@ AUDIO OUT ┤ D6~ (단일 PWM, J9)      A1 │
 
 ## 문서
 
+- [`WIRING.md`](./WIRING.md) — **모듈별 결선 가이드** (실제 조립 시 참고)
 - [`API_GUIDE.md`](./API_GUIDE.md) — 사용하는 3개 API의 엔드포인트/파라미터/응답 형식 + 통합 아키텍처
 - [`DEV_PROCESS.md`](./DEV_PROCESS.md) — Phase 1~3 개발 프로세스 + 메인 loop 의사코드
 - [`NOTES_RCWL_FALSEPOSITIVE.md`](./NOTES_RCWL_FALSEPOSITIVE.md) — RCWL의 사용자 본인 오감지 문제와 PIR 게이팅 해결책

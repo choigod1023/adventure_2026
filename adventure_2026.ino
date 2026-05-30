@@ -1,50 +1,284 @@
-// ============================================================
-//  DuoBell 오디오 믹싱 테스트
-// ------------------------------------------------------------
-//  저음(DAC 사인) + 고음(PWM 사각)을 동시 출력 → 하드웨어
-//  저항 합산으로 모노 스피커 1개에서 두 톤이 같이 울리는지 확인.
-//
-//  배선 (J9):
-//    A0 (DAC) ──[ R_a 10k ]──┐
-//                            ├──[ C 1uF ]── 스피커(+)   (앰프 권장)
-//    D6~(PWM) ──[ R1 ]─[ C1 ]┘             스피커(-) ── GND
-// ============================================================
+/*
+ * adventure_2026.ino  -  메인 스케치
+ * 스몸비 안전 경고 장치 (Arduino UNO R4 WiFi)
+ *
+ * 모드 구성 (실측 PCB 기준) — 전부 모멘터리 푸시 버튼:
+ *   D8  (PIN_BTN_MODE)   : API 카테고리 ↔ SENSOR 모드 토글
+ *   D9  (PIN_BTN_BUS)    : → ①버스 API 모드
+ *   D10 (PIN_BTN_SUBWAY) : → ②지하철 API 모드
+ *   D11 (PIN_BTN_SPAT)   : → ③C-ITS API 모드
+ *   D9~D11 은 SENSOR 상태였어도 누르면 해당 API 모드로 복귀.
+ *   현재 활성 모드의 위험 트리거만 경고 발생.
+ *
+ * 오디오 (DuoBell — 한 스피커에 두 톤 동시 출력):
+ *   A0 (DAC) = 780Hz 사인파 (저음, ANC 취약점)
+ *   D6 (PWM) = 2kHz   사각파 (고음, 습관화 방지)
+ *   하드웨어 저항 합산으로 모노 스피커 1개에 믹싱.
+ *
+ * 파일 분할 (Arduino IDE 자동 병합):
+ *   adventure_2026.ino  ← 본 파일: 전역 상태, setup/loop, 모드 매니저, 오디오
+ *   apis.ino            ← WiFi + 3개 API
+ *   sensors.ino         ← PIR + RCWL 게이팅
+ *   ui.ino              ← OLED 렌더링
+ *
+ * 라이브러리:
+ *   - WiFiS3              (보드패키지)
+ *   - ArduinoHttpClient   (라이브러리 매니저)
+ *   - ArduinoJson v7      (Benoit Blanchon)
+ *   - U8g2lib             (oliver)
+ *   - analogWave          (UNO R4 보드패키지 기본 포함)
+ */
 
+#include <WiFiS3.h>
+#include <ArduinoHttpClient.h>
+#include <ArduinoJson.h>
+#include <U8g2lib.h>
+#include <Wire.h>
 #include "analogWave.h"
+
+#include "secrets.h"
 #include "config.h"
 
-analogWave wave(DAC); // A0 = DAC, 저음 사인 출력
+// ════════════════════════════════════════════════════════════════
+//  전역 상태
+// ════════════════════════════════════════════════════════════════
 
-void warnOn() {
-  wave.amplitude(0.8);                    // 저음 ON (DAC)
-  tone(PIN_SPK_PWM, TONE_FREQ_SECONDARY); // 고음 ON (PWM)
-}
+// ─── 모드 ───
+//   ApiMode: API 카테고리 안에서 선택된 모드 (D9~D11 버튼으로 직접 선택)
+//   SENSOR  모드는 별도 플래그 (D8 버튼 토글)
+enum ApiMode {
+  API_BUS = 0,
+  API_SUBWAY,
+  API_SPAT,
+  API_COUNT
+};
+ApiMode currentApiMode = API_BUS;   // 마지막으로 선택된 API 모드
+bool sensorMode = false;            // true = SENSOR 모드 (D8 토글)
+bool modeJustChanged = true;        // 새 모드 진입 시 즉시 fetch
 
-void warnOff() {
-  wave.amplitude(0.0); // 저음 OFF (freq 유지, 진폭만 0)
-  noTone(PIN_SPK_PWM); // 고음 OFF
-}
+// ─── 네트워크 상태 ───
+enum NetState { NET_BOOT, NET_WIFI, NET_OK, NET_OFFLINE };
+NetState netState = NET_BOOT;
 
+// ─── 표시 데이터 ───
+struct DisplayData {
+  bool valid;
+  bool danger;
+  char line1[40];          // 컨텍스트 (정류장명/역명/교차로/모드명)
+  char line2[48];          // 상세
+  unsigned long updatedAt;
+};
+DisplayData displayData = { false, false, "", "", 0 };
+
+// ─── 센서 상태 ───
+struct SensorState {
+  bool pir_now;
+  bool radar_now;
+  unsigned long pir_last_high_ms;
+  unsigned long radar_last_high_ms;
+  int radar_trigger_count;
+};
+SensorState sensors = { false, false, 0, 0, 0 };
+
+// ─── 위험 상태머신 ───
+bool dangerActive = false;
+unsigned long dangerLastDetectedAt = 0;
+
+// ─── 폴링 타이머 ───
+unsigned long lastFetchBus    = 0;
+unsigned long lastFetchSubway = 0;
+unsigned long lastFetchSpat   = 0;
+unsigned long lastDraw        = 0;
+const unsigned long DRAW_INTERVAL_MS = 250UL;
+
+// ─── 버튼 디바운스 (모멘터리 푸시, INPUT_PULLUP / 눌림=LOW) ───
+struct Btn { uint8_t pin; bool prev; unsigned long lastMs; };
+Btn btnMode   = { PIN_BTN_MODE,   HIGH, 0 };  // D8  : API ↔ SENSOR 토글
+Btn btnBus    = { PIN_BTN_BUS,    HIGH, 0 };  // D9  : → BUS
+Btn btnSubway = { PIN_BTN_SUBWAY, HIGH, 0 };  // D10 : → SUBWAY
+Btn btnSpat   = { PIN_BTN_SPAT,   HIGH, 0 };  // D11 : → CITS
+
+// ─── OLED ───
+U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
+const int OLED_WIDTH = 128;
+const int OLED_MAX_TEXT_WIDTH = 124;
+
+// ─── HTTP ───
+WiFiClient    plainSock;
+WiFiSSLClient sslSock;
+
+// ─── 오디오 (DuoBell) ───
+analogWave wave(DAC);   // A0 = DAC, 저음 사인
+bool warnAudioOn = false;
+
+// ════════════════════════════════════════════════════════════════
+//  setup / loop
+// ════════════════════════════════════════════════════════════════
 void setup() {
   Serial.begin(115200);
-  pinMode(PIN_SPK_PWM, OUTPUT);
+  while (!Serial && millis() < 2000);
+  Serial.println(F("\n=== adventure_2026 ==="));
+  Serial.println(F("스몸비 안전 경고 장치 (버튼 모드 선택)"));
 
-  wave.sine(TONE_FREQ_PRIMARY); // 780Hz 사인 준비
-  wave.amplitude(0.0);          // 시작은 무음
+  // GPIO
+  pinMode(PIN_PIR,       INPUT);
+#if HAS_RCWL
+  pinMode(PIN_RADAR,     INPUT);
+#endif
+  pinMode(PIN_BTN_MODE,   INPUT_PULLUP);
+  pinMode(PIN_BTN_BUS,    INPUT_PULLUP);
+  pinMode(PIN_BTN_SUBWAY, INPUT_PULLUP);
+  pinMode(PIN_BTN_SPAT,   INPUT_PULLUP);
+  pinMode(PIN_SPK_PWM,   OUTPUT);
 
-  Serial.print("DuoBell test: ");
-  Serial.print(TONE_FREQ_PRIMARY);
-  Serial.print("Hz(DAC) + ");
-  Serial.print(TONE_FREQ_SECONDARY);
-  Serial.println("Hz(PWM)");
+  // 오디오: 780Hz 사인 준비 (진폭 0 → 무음 상태)
+  wave.sine(TONE_FREQ_PRIMARY);
+  wave.amplitude(0.0);
+  noTone(PIN_SPK_PWM);
+
+  // OLED
+  Wire.begin();
+  u8g2.begin();
+  drawScreen();
+
+  // 부팅 시작 모드: API / BUS
+  sensorMode = false;
+  currentApiMode = API_BUS;
+  Serial.print(F("[부팅 모드] API / "));
+  Serial.println(apiModeName(currentApiMode));
+
+  // WiFi (API 모드일 때 필요 — 센서 모드여도 미리 연결)
+  connectWiFi();
+
+  Serial.println(F("[부팅 완료] D8=API/SENSOR, D9~D11=BUS/SUBWAY/CITS"));
 }
 
 void loop() {
-  warnOn();
-  Serial.println("[WARN]  두 톤 동시 출력");
-  delay(1000);
+  // 1) 입력
+  pollButtons();
+  pollSensors();   // sensors.ino
 
-  warnOff();
-  Serial.println("[idle]  무음");
-  delay(1000);
+  // 2) WiFi 자동 폴백 (API 모드인데 끊겼으면 센서 모드로)
+  manageWiFi();    // apis.ino
+
+  // 3) 현재 모드의 위험 평가
+  bool danger;
+  if (sensorMode) {
+    danger = evaluateSensor();        // sensors.ino
+  } else {
+    switch (currentApiMode) {
+      case API_BUS:    danger = evaluateBus();    break;  // apis.ino
+      case API_SUBWAY: danger = evaluateSubway(); break;  // apis.ino
+      case API_SPAT:   danger = evaluateSpat();   break;  // apis.ino
+      default:         danger = false;            break;
+    }
+  }
+
+  // 4) 위험 상태머신
+  updateDangerState(danger);
+
+  // 5) 출력
+  driveAudio();
+  if (millis() - lastDraw >= DRAW_INTERVAL_MS) {
+    lastDraw = millis();
+    drawScreen();    // ui.ino
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+//  버튼 입력 → 모드 선택
+//   D8         : API 카테고리 ↔ SENSOR 토글
+//   D9/D10/D11 : BUS/SUBWAY/CITS 직접 선택 (자동으로 API 카테고리 진입)
+// ════════════════════════════════════════════════════════════════
+
+// 버튼 눌림(HIGH→LOW falling edge) 검출 + 디바운스. 눌리면 true 1회.
+bool btnPressed(Btn &b) {
+  bool now = digitalRead(b.pin);
+  if (now == b.prev) return false;
+  if (millis() - b.lastMs < DEBOUNCE_MS) return false;
+  b.lastMs = millis();
+  b.prev = now;
+  return (now == LOW);   // 눌림 에지에서만 true
+}
+
+// 모드 진입 공통 처리 (fetch 재트리거 + 화면 초기화)
+void enterMode() {
+  modeJustChanged = true;
+  displayData.valid = false;
+  displayData.danger = false;
+}
+
+void selectApi(ApiMode m) {
+  sensorMode = false;
+  currentApiMode = m;
+  enterMode();
+  Serial.print(F("[버튼] API → "));
+  Serial.println(apiModeName(m));
+}
+
+void pollButtons() {
+  // D8: API ↔ SENSOR 토글
+  if (btnPressed(btnMode)) {
+    sensorMode = !sensorMode;
+    enterMode();
+    Serial.print(F("[버튼] 토글 → "));
+    Serial.println(sensorMode ? F("SENSOR") : F("API"));
+  }
+
+  // D9~D11: API 모드 직접 선택 (SENSOR 였어도 API로 복귀)
+  if (btnPressed(btnBus))    selectApi(API_BUS);
+  if (btnPressed(btnSubway)) selectApi(API_SUBWAY);
+  if (btnPressed(btnSpat))   selectApi(API_SPAT);
+}
+
+const char* apiModeName(ApiMode m) {
+  switch (m) {
+    case API_BUS:    return "BUS";
+    case API_SUBWAY: return "SUBWAY";
+    case API_SPAT:   return "CITS";
+    default:         return "?";
+  }
+}
+
+const char* currentModeLabel() {
+  return sensorMode ? "SENSOR" : apiModeName(currentApiMode);
+}
+
+// ════════════════════════════════════════════════════════════════
+//  위험 상태머신 (히스테리시스: WARN_DURATION_MS 유지)
+// ════════════════════════════════════════════════════════════════
+void updateDangerState(bool detected) {
+  if (detected) {
+    dangerLastDetectedAt = millis();
+    if (!dangerActive) {
+      dangerActive = true;
+      Serial.println(F("[WARN] 위험 트리거 ON"));
+    }
+  } else if (dangerActive &&
+             (millis() - dangerLastDetectedAt) > WARN_DURATION_MS) {
+    dangerActive = false;
+    Serial.println(F("[WARN] 위험 해제"));
+  }
+}
+
+// ════════════════════════════════════════════════════════════════
+//  오디오 (DuoBell — 780Hz DAC + 2kHz PWM 동시 출력)
+// ════════════════════════════════════════════════════════════════
+void warnOn() {
+  if (warnAudioOn) return;
+  wave.amplitude(0.8);                       // 저음 ON
+  tone(PIN_SPK_PWM, TONE_FREQ_SECONDARY);    // 고음 ON
+  warnAudioOn = true;
+}
+
+void warnOff() {
+  if (!warnAudioOn) return;
+  wave.amplitude(0.0);                       // 저음 OFF (freq 유지, 진폭만 0)
+  noTone(PIN_SPK_PWM);                       // 고음 OFF
+  warnAudioOn = false;
+}
+
+void driveAudio() {
+  if (dangerActive) warnOn();
+  else              warnOff();
 }

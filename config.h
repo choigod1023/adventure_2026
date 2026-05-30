@@ -23,9 +23,28 @@
 // 예: "서울", "강남", "잠실"
 #define SUBWAY_STATION "수유"
 
-// C-ITS 교차로 ID (t-data 사이트에서 검색)
-// "" (빈 문자열)로 두면 전체 — 단, numOfRows=1 이어도 응답 크기 주의
-#define SPAT_ITST_ID ""
+// 지하철 역명 UTF-8 URL 인코딩 (API URL 안전 전송용)
+// "수유"   = %EC%88%98%EC%9C%A0
+// "서울"   = %EC%84%9C%EC%9A%B8
+// "강남"   = %EA%B0%95%EB%82%A8
+// "잠실"   = %EC%9E%A0%EC%8B%A4
+// "교대"   = %EA%B5%90%EB%8C%80
+// SUBWAY_STATION 변경 시 반드시 같이 갱신할 것.
+#define SUBWAY_STATION_ENC "%EC%88%98%EC%9C%A0"
+
+// C-ITS 교차로 ID (itstId, 문자열). t-data 사이트 또는 응답의 itstId 필드에서 확인.
+// ⚠️ 반드시 모니터링할 교차로 ID 를 지정할 것. "" 로 두면 임의 교차로가 잡힘.
+//    "1063" = 번동사거리
+#define SPAT_ITST_ID "1063"
+
+// OLED 에 표시할 교차로 이름 (API 응답엔 한글 이름이 없어서 직접 지정)
+#define SPAT_ITST_NAME "번동사거리"
+
+// 감시할 보행 신호 방향 — 응답 필드명 + 표시 라벨
+//   북=nt 동=et 남=st 서=wt / 대각: ne se sw nw  (+ "PdsgRmdrCs")
+//   ⚠️ 번동사거리(1063)는 동(et)·북(nt) 보행 신호가 null. 남(st) 사용.
+#define SPAT_PED_FIELD "stPdsgRmdrCs"  // 남(南) 보행
+#define SPAT_PED_LABEL "남 보행"
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  2. 핀 배치  (실측 PCB 스키매틱 기준)
@@ -39,8 +58,14 @@
 #define PIN_RADAR 2 // RCWL-0516 차량 감지 — J8
 #define PIN_PIR 5   // HC-SR505 보행자 감지 — J11
 
-// 모드 스위치 (API ↔ 센서) — J10
-#define PIN_MODE_SW 8 // HIGH = API 모드, LOW = 센서 모드
+// 입력 버튼 (전부 모멘터리 푸시, INPUT_PULLUP / 눌림 = LOW)
+//   D8  : API 카테고리 ↔ SENSOR 모드 토글 — J10
+//   D9~ : API 모드 직접 선택 (OLED 모듈 내장 버튼) — J7
+#define PIN_BTN_MODE 8   // API ↔ SENSOR 토글
+#define PIN_BTN_BUS 9    // → BUS 모드
+#define PIN_BTN_SUBWAY 10 // → SUBWAY 모드
+#define PIN_BTN_SPAT 11  // → CITS 모드
+// D12 : 예비 (미사용)
 
 // 스피커 출력 (듀오벨: 저음 DAC + 고음 PWM → 하드웨어 저항 합산 → 모노 스피커) — J9
 //   A0(DAC) 사인파 저음 + D6~(PWM) 사각파 고음을 '동시' 출력해 한 스피커로 믹싱.
@@ -72,3 +97,11 @@
 
 // SPAT 응답에서 "비활성/점멸"을 의미하는 센티넬 값
 #define SPAT_SENTINEL 36001.0f
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  4. 하드웨어 부착 토글 (부품 도착 전 임시 비활성)
+//     1 로 바꾸면 활성화. 다른 코드 수정 불필요.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#define HAS_RCWL 1  // RCWL-0516 차량 감지 모듈 (D2)
+// PIR(D5), OLED(I2C), 모드 스위치(D8), DuoBell 오디오(A0+D6) 는 기본 활성
