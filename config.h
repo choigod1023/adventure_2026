@@ -33,10 +33,18 @@
 #define SUBWAY_STATION_ENC "%EC%88%98%EC%9C%A0"
 
 // C-ITS 교차로 ID (itstId, 문자열). t-data 사이트 또는 응답의 itstId 필드에서 확인.
-// ⚠️ "" (빈 값) + numOfRows=1 이면 서버가 주는 '임의의 한 교차로'만 잡힘
-//    (실측 시 "2691"이 잡혔음 — 장치 설치 위치와 무관!).
-//    실제 배포 시 반드시 모니터링할 교차로 ID 를 지정할 것.
-#define SPAT_ITST_ID ""
+// ⚠️ 반드시 모니터링할 교차로 ID 를 지정할 것. "" 로 두면 임의 교차로가 잡힘.
+//    "1063" = 번동사거리
+#define SPAT_ITST_ID "1063"
+
+// OLED 에 표시할 교차로 이름 (API 응답엔 한글 이름이 없어서 직접 지정)
+#define SPAT_ITST_NAME "번동사거리"
+
+// 감시할 보행 신호 방향 — 응답 필드명 + 표시 라벨
+//   북=nt 동=et 남=st 서=wt / 대각: ne se sw nw  (+ "PdsgRmdrCs")
+//   ⚠️ 번동사거리(1063)는 동(et)·북(nt) 보행 신호가 null. 남(st) 사용.
+#define SPAT_PED_FIELD "stPdsgRmdrCs"  // 남(南) 보행
+#define SPAT_PED_LABEL "남 보행"
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  2. 핀 배치  (실측 PCB 스키매틱 기준)
@@ -50,8 +58,14 @@
 #define PIN_RADAR 2 // RCWL-0516 차량 감지 — J8
 #define PIN_PIR 5   // HC-SR505 보행자 감지 — J11
 
-// 모드 스위치 (API ↔ 센서) — J10
-#define PIN_MODE_SW 8 // HIGH = API 모드, LOW = 센서 모드
+// 입력 버튼 (전부 모멘터리 푸시, INPUT_PULLUP / 눌림 = LOW)
+//   D8  : API 카테고리 ↔ SENSOR 모드 토글 — J10
+//   D9~ : API 모드 직접 선택 (OLED 모듈 내장 버튼) — J7
+#define PIN_BTN_MODE 8   // API ↔ SENSOR 토글
+#define PIN_BTN_BUS 9    // → BUS 모드
+#define PIN_BTN_SUBWAY 10 // → SUBWAY 모드
+#define PIN_BTN_SPAT 11  // → CITS 모드
+// D12 : 예비 (미사용)
 
 // 스피커 출력 (듀오벨: 저음 DAC + 고음 PWM → 하드웨어 저항 합산 → 모노 스피커) — J9
 //   A0(DAC) 사인파 저음 + D6~(PWM) 사각파 고음을 '동시' 출력해 한 스피커로 믹싱.
@@ -68,12 +82,6 @@
   15000UL // 버스 (1000회/일 → 15초 = 5760회/일 → ⚠️ 30초 권장)
 #define POLL_INTERVAL_SUBWAY_MS 15000UL
 #define POLL_INTERVAL_SPAT_MS 5000UL // 신호등은 빨라야 함 (잔여 3초 감지)
-
-// API 모드 자동 순환 주기 (ms)
-//   스위치 HIGH(API) 상태에서 ①버스 → ②지하철 → ③C-ITS → ①… 자동 전환.
-//   각 API의 POLL_INTERVAL_* 와 별개로, "현재 표시 중인 모드" 가 바뀌는 주기.
-//   너무 짧으면 fetch 끝나기 전에 모드가 바뀜 → 10초 이상 권장.
-#define API_ROTATE_INTERVAL_MS 12000UL
 
 // 위험 판정 임계값
 #define WARN_PEDESTRIAN_SEC 3.0f // 보행자 신호 잔여 N초 미만 → 경고
@@ -95,5 +103,5 @@
 //     1 로 바꾸면 활성화. 다른 코드 수정 불필요.
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-#define HAS_RCWL 0  // RCWL-0516 차량 감지 모듈 (D2)
+#define HAS_RCWL 1  // RCWL-0516 차량 감지 모듈 (D2)
 // PIR(D5), OLED(I2C), 모드 스위치(D8), DuoBell 오디오(A0+D6) 는 기본 활성

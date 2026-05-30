@@ -306,11 +306,22 @@ void fetchSpat() {
     return;
   }
 
+  // ⚠️ 응답을 String 으로 통째로 받으면 안 됨 (메모리 고갈 → 보드 행 → 리셋).
+  //    헤더를 건너뛴 뒤, '필터' 로 우리가 쓰는 필드만 추출하며 스트림 파싱한다.
+  //    → 서버가 큰 응답을 줘도 메모리 사용량이 일정하게 유지됨.
+  http.skipResponseHeaders();   // 본문 시작 위치로 이동 (이게 없으면 JSON 오류)
+
+  // 배열의 각 원소에서 우리가 쓰는 1개 보행 방향만 남김 (나머지는 파싱 중 버려짐)
+  JsonDocument filter;
+  filter[0][SPAT_PED_FIELD] = true;
+
   JsonDocument doc;
-  DeserializationError err = deserializeJson(doc, http);
+  DeserializationError err =
+    deserializeJson(doc, http, DeserializationOption::Filter(filter));
   http.stop();
 
   if (err) {
+    Serial.print(F("[JSON 파싱 오류] ")); Serial.println(err.c_str());
     setDisplayError("CITS", "JSON 오류");
     return;
   }
@@ -319,52 +330,29 @@ void fetchSpat() {
     return;
   }
 
-  JsonObject item = doc.as<JsonArray>()[0];
-  const char* itstId = item["itstId"] | "?";   // 문자열 (예: "2691")
-
-  // ── 4방위 보행자 신호(Pdsg) 잔여 중 최소값 사용 ──
-  //  값 단위: 센티초(1/10초). null = 해당 방위에 보행 신호 없음.
-  //  36001(SPAT_SENTINEL) = 신호 미운영/점멸.
+  // ── 번동사거리 동(東) 보행 신호 1개만 본다 ──
+  //  값 단위: 센티초(1/10초). null = 보행 신호 없음. 36001 = 신호 미운영/점멸.
   //
   //  ⚠️ 한계: 이 엔드포인트는 "현재 페이즈의 잔여시간"만 주고,
-  //     그 페이즈가 보행 GREEN 인지 RED 인지 알려주는 필드가 없음.
+  //     보행 GREEN 인지 RED 인지 알려주는 필드가 없음.
   //     → 잔여 < 임계값을 "곧 신호 바뀜 = 위험"으로 해석 (보수적 경고).
-  //     실배포 시 해당 교차로의 보행 페이즈 길이로 임계값 튜닝 권장.
-  float minPed = SPAT_SENTINEL;
-  const char* minDir = "?";
-  struct { const char* dir; const char* key; } dirs[] = {
-    { "북", "ntPdsgRmdrCs" },
-    { "동", "etPdsgRmdrCs" },
-    { "남", "stPdsgRmdrCs" },
-    { "서", "wtPdsgRmdrCs" },
-  };
-  for (int i = 0; i < 4; i++) {
-    JsonVariant v = item[dirs[i].key];
-    Serial.print(F("  ")); Serial.print(dirs[i].dir); Serial.print(F(" 보행: "));
-    if (v.isNull()) { Serial.println(F("--")); continue; }
-    float cs = v.as<float>();
-    if (cs >= SPAT_SENTINEL) { Serial.println(F("[미운영]")); continue; }
-    Serial.print(cs / 10.0f, 1); Serial.println(F("s"));
-    if (cs < minPed) { minPed = cs; minDir = dirs[i].dir; }
-  }
+  JsonObject item = doc.as<JsonArray>()[0];
+  JsonVariant v = item[SPAT_PED_FIELD];
 
-  char context[40];
-  snprintf(context, sizeof(context), "%s 교차로", itstId);
-
-  if (minPed >= SPAT_SENTINEL) {
-    setDisplayValid(context, "보행 신호 없음", false);
+  if (v.isNull() || v.as<float>() >= SPAT_SENTINEL) {
+    Serial.println(F("  " SPAT_PED_LABEL ": 미운영"));
+    setDisplayValid(SPAT_ITST_NAME, SPAT_PED_LABEL " 신호 없음", false);
     return;
   }
 
-  float sec = minPed / 10.0f;
+  float sec = v.as<float>() / 10.0f;
   char detail[40];
-  snprintf(detail, sizeof(detail), "%s 보행 %d.%ds",
-           minDir, (int)sec, (int)(sec * 10) % 10);
+  snprintf(detail, sizeof(detail), SPAT_PED_LABEL " %d.%ds",
+           (int)sec, (int)(sec * 10) % 10);
   bool danger = (sec < WARN_PEDESTRIAN_SEC);
-  Serial.print(F("  → 최소 ")); Serial.print(minDir);
-  Serial.print(F(" ")); Serial.print(sec, 1);
+  Serial.print(F("  " SPAT_PED_LABEL ": ")); Serial.print(sec, 1);
   Serial.println(danger ? F("s [위험]") : F("s [정상]"));
-  setDisplayValid(context, detail, danger);
+  setDisplayValid(SPAT_ITST_NAME, detail, danger);
 }
 
 // ════════════════════════════════════════════════════════════════

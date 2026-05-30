@@ -2,12 +2,12 @@
  * adventure_2026.ino  -  메인 스케치
  * 스몸비 안전 경고 장치 (Arduino UNO R4 WiFi)
  *
- * 모드 구성 (실측 PCB 기준):
- *   스위치 D8 (PIN_MODE_SW):
- *     HIGH = API 모드 (위) — ①버스 / ②지하철 / ③C-ITS 자동 순환
- *     LOW  = 센서 모드 (아래) — ④ RCWL + PIR 오프라인 감지
- *
- *   API 모드 안에서 API_ROTATE_INTERVAL_MS 마다 다음 API 로 자동 전환.
+ * 모드 구성 (실측 PCB 기준) — 전부 모멘터리 푸시 버튼:
+ *   D8  (PIN_BTN_MODE)   : API 카테고리 ↔ SENSOR 모드 토글
+ *   D9  (PIN_BTN_BUS)    : → ①버스 API 모드
+ *   D10 (PIN_BTN_SUBWAY) : → ②지하철 API 모드
+ *   D11 (PIN_BTN_SPAT)   : → ③C-ITS API 모드
+ *   D9~D11 은 SENSOR 상태였어도 누르면 해당 API 모드로 복귀.
  *   현재 활성 모드의 위험 트리거만 경고 발생.
  *
  * 오디오 (DuoBell — 한 스피커에 두 톤 동시 출력):
@@ -44,18 +44,17 @@
 // ════════════════════════════════════════════════════════════════
 
 // ─── 모드 ───
-//   ApiMode: API 모드 안에서의 자동 순환 인덱스
-//   SENSOR  모드는 별도 플래그 (스위치 LOW 일 때)
+//   ApiMode: API 카테고리 안에서 선택된 모드 (D9~D11 버튼으로 직접 선택)
+//   SENSOR  모드는 별도 플래그 (D8 버튼 토글)
 enum ApiMode {
   API_BUS = 0,
   API_SUBWAY,
   API_SPAT,
   API_COUNT
 };
-ApiMode currentApiMode = API_BUS;
-bool sensorMode = false;            // true = 스위치 LOW (센서 모드)
+ApiMode currentApiMode = API_BUS;   // 마지막으로 선택된 API 모드
+bool sensorMode = false;            // true = SENSOR 모드 (D8 토글)
 bool modeJustChanged = true;        // 새 모드 진입 시 즉시 fetch
-unsigned long lastApiRotateMs = 0;
 
 // ─── 네트워크 상태 ───
 enum NetState { NET_BOOT, NET_WIFI, NET_OK, NET_OFFLINE };
@@ -92,9 +91,12 @@ unsigned long lastFetchSpat   = 0;
 unsigned long lastDraw        = 0;
 const unsigned long DRAW_INTERVAL_MS = 250UL;
 
-// ─── 스위치 디바운스 ───
-bool prevSwitchReading = HIGH;
-unsigned long switchLastChangeMs = 0;
+// ─── 버튼 디바운스 (모멘터리 푸시, INPUT_PULLUP / 눌림=LOW) ───
+struct Btn { uint8_t pin; bool prev; unsigned long lastMs; };
+Btn btnMode   = { PIN_BTN_MODE,   HIGH, 0 };  // D8  : API ↔ SENSOR 토글
+Btn btnBus    = { PIN_BTN_BUS,    HIGH, 0 };  // D9  : → BUS
+Btn btnSubway = { PIN_BTN_SUBWAY, HIGH, 0 };  // D10 : → SUBWAY
+Btn btnSpat   = { PIN_BTN_SPAT,   HIGH, 0 };  // D11 : → CITS
 
 // ─── OLED ───
 U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, U8X8_PIN_NONE);
@@ -116,14 +118,17 @@ void setup() {
   Serial.begin(115200);
   while (!Serial && millis() < 2000);
   Serial.println(F("\n=== adventure_2026 ==="));
-  Serial.println(F("스몸비 안전 경고 장치 (자동 순환 API + 센서)"));
+  Serial.println(F("스몸비 안전 경고 장치 (버튼 모드 선택)"));
 
   // GPIO
   pinMode(PIN_PIR,       INPUT);
 #if HAS_RCWL
   pinMode(PIN_RADAR,     INPUT);
 #endif
-  pinMode(PIN_MODE_SW,   INPUT_PULLUP);
+  pinMode(PIN_BTN_MODE,   INPUT_PULLUP);
+  pinMode(PIN_BTN_BUS,    INPUT_PULLUP);
+  pinMode(PIN_BTN_SUBWAY, INPUT_PULLUP);
+  pinMode(PIN_BTN_SPAT,   INPUT_PULLUP);
   pinMode(PIN_SPK_PWM,   OUTPUT);
 
   // 오디오: 780Hz 사인 준비 (진폭 0 → 무음 상태)
@@ -136,34 +141,27 @@ void setup() {
   u8g2.begin();
   drawScreen();
 
-  // 스위치 초기 상태 읽어 모드 결정 (디바운스 무시, 부팅 직후 1회)
-  sensorMode = (digitalRead(PIN_MODE_SW) == LOW);
-  prevSwitchReading = digitalRead(PIN_MODE_SW);
-  Serial.print(F("[부팅 모드] "));
-  Serial.println(sensorMode ? F("SENSOR (스위치 LOW)") : F("API (스위치 HIGH)"));
+  // 부팅 시작 모드: API / BUS
+  sensorMode = false;
+  currentApiMode = API_BUS;
+  Serial.print(F("[부팅 모드] API / "));
+  Serial.println(apiModeName(currentApiMode));
 
-  // WiFi (API 모드일 때만 의미 있음 — 센서 모드여도 미리 연결)
+  // WiFi (API 모드일 때 필요 — 센서 모드여도 미리 연결)
   connectWiFi();
 
-  lastApiRotateMs = millis();
-  Serial.println(F("[부팅 완료]"));
+  Serial.println(F("[부팅 완료] D8=API/SENSOR, D9~D11=BUS/SUBWAY/CITS"));
 }
 
 void loop() {
   // 1) 입력
-  pollSwitch();
+  pollButtons();
   pollSensors();   // sensors.ino
 
   // 2) WiFi 자동 폴백 (API 모드인데 끊겼으면 센서 모드로)
   manageWiFi();    // apis.ino
 
-  // 3) API 모드 자동 순환
-  if (!sensorMode && (millis() - lastApiRotateMs >= API_ROTATE_INTERVAL_MS)) {
-    lastApiRotateMs = millis();
-    rotateApiMode();
-  }
-
-  // 4) 현재 모드의 위험 평가
+  // 3) 현재 모드의 위험 평가
   bool danger;
   if (sensorMode) {
     danger = evaluateSensor();        // sensors.ino
@@ -176,10 +174,10 @@ void loop() {
     }
   }
 
-  // 5) 위험 상태머신
+  // 4) 위험 상태머신
   updateDangerState(danger);
 
-  // 6) 출력
+  // 5) 출력
   driveAudio();
   if (millis() - lastDraw >= DRAW_INTERVAL_MS) {
     lastDraw = millis();
@@ -188,35 +186,49 @@ void loop() {
 }
 
 // ════════════════════════════════════════════════════════════════
-//  스위치 → 모드 카테고리 전환
+//  버튼 입력 → 모드 선택
+//   D8         : API 카테고리 ↔ SENSOR 토글
+//   D9/D10/D11 : BUS/SUBWAY/CITS 직접 선택 (자동으로 API 카테고리 진입)
 // ════════════════════════════════════════════════════════════════
-void pollSwitch() {
-  bool now = digitalRead(PIN_MODE_SW);
-  if (now == prevSwitchReading) return;
-  if (millis() - switchLastChangeMs < DEBOUNCE_MS) return;
-  switchLastChangeMs = millis();
-  prevSwitchReading = now;
 
-  bool newSensorMode = (now == LOW);
-  if (newSensorMode == sensorMode) return;
-
-  sensorMode = newSensorMode;
-  modeJustChanged = true;
-  displayData.valid = false;
-  displayData.danger = false;
-  lastApiRotateMs = millis();
-
-  Serial.print(F("[모드 전환] → "));
-  Serial.println(sensorMode ? F("SENSOR") : F("API"));
+// 버튼 눌림(HIGH→LOW falling edge) 검출 + 디바운스. 눌리면 true 1회.
+bool btnPressed(Btn &b) {
+  bool now = digitalRead(b.pin);
+  if (now == b.prev) return false;
+  if (millis() - b.lastMs < DEBOUNCE_MS) return false;
+  b.lastMs = millis();
+  b.prev = now;
+  return (now == LOW);   // 눌림 에지에서만 true
 }
 
-void rotateApiMode() {
-  currentApiMode = (ApiMode)((currentApiMode + 1) % API_COUNT);
+// 모드 진입 공통 처리 (fetch 재트리거 + 화면 초기화)
+void enterMode() {
   modeJustChanged = true;
   displayData.valid = false;
   displayData.danger = false;
-  Serial.print(F("[API 자동 순환] → "));
-  Serial.println(apiModeName(currentApiMode));
+}
+
+void selectApi(ApiMode m) {
+  sensorMode = false;
+  currentApiMode = m;
+  enterMode();
+  Serial.print(F("[버튼] API → "));
+  Serial.println(apiModeName(m));
+}
+
+void pollButtons() {
+  // D8: API ↔ SENSOR 토글
+  if (btnPressed(btnMode)) {
+    sensorMode = !sensorMode;
+    enterMode();
+    Serial.print(F("[버튼] 토글 → "));
+    Serial.println(sensorMode ? F("SENSOR") : F("API"));
+  }
+
+  // D9~D11: API 모드 직접 선택 (SENSOR 였어도 API로 복귀)
+  if (btnPressed(btnBus))    selectApi(API_BUS);
+  if (btnPressed(btnSubway)) selectApi(API_SUBWAY);
+  if (btnPressed(btnSpat))   selectApi(API_SPAT);
 }
 
 const char* apiModeName(ApiMode m) {
