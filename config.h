@@ -23,6 +23,15 @@
 // 예: "서울", "강남", "잠실"
 #define SUBWAY_STATION "수유"
 
+// 지하철 역명 UTF-8 URL 인코딩 (API URL 안전 전송용)
+// "수유"   = %EC%88%98%EC%9C%A0
+// "서울"   = %EC%84%9C%EC%9A%B8
+// "강남"   = %EA%B0%95%EB%82%A8
+// "잠실"   = %EC%9E%A0%EC%8B%A4
+// "교대"   = %EA%B5%90%EB%8C%80
+// SUBWAY_STATION 변경 시 반드시 같이 갱신할 것.
+#define SUBWAY_STATION_ENC "%EC%88%98%EC%9C%A0"
+
 // C-ITS 교차로 ID (t-data 사이트에서 검색)
 // "" (빈 문자열)로 두면 전체 — 단, numOfRows=1 이어도 응답 크기 주의
 #define SPAT_ITST_ID ""
@@ -58,6 +67,12 @@
 #define POLL_INTERVAL_SUBWAY_MS 15000UL
 #define POLL_INTERVAL_SPAT_MS 5000UL // 신호등은 빨라야 함 (잔여 3초 감지)
 
+// API 모드 자동 순환 주기 (ms)
+//   스위치 HIGH(API) 상태에서 ①버스 → ②지하철 → ③C-ITS → ①… 자동 전환.
+//   각 API의 POLL_INTERVAL_* 와 별개로, "현재 표시 중인 모드" 가 바뀌는 주기.
+//   너무 짧으면 fetch 끝나기 전에 모드가 바뀜 → 10초 이상 권장.
+#define API_ROTATE_INTERVAL_MS 12000UL
+
 // 위험 판정 임계값
 #define WARN_PEDESTRIAN_SEC 3.0f // 보행자 신호 잔여 N초 미만 → 경고
 #define WARN_DURATION_MS 5000UL  // 위험 해소 후 N ms 유지
@@ -72,3 +87,11 @@
 
 // SPAT 응답에서 "비활성/점멸"을 의미하는 센티넬 값
 #define SPAT_SENTINEL 36001.0f
+
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+//  4. 하드웨어 부착 토글 (부품 도착 전 임시 비활성)
+//     1 로 바꾸면 활성화. 다른 코드 수정 불필요.
+// ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+#define HAS_RCWL 0  // RCWL-0516 차량 감지 모듈 (D2)
+// PIR(D5), OLED(I2C), 모드 스위치(D8), DuoBell 오디오(A0+D6) 는 기본 활성
