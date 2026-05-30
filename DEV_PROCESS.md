@@ -172,7 +172,25 @@ void loop() {
 
 ## Phase 3: 하드웨어 통합 (센서 도착 후)
 
-### 3-1. 결선 순서
+### 3-1. 핀맵
+
+| 핀 | 연결 대상 | 방향 | 비고 |
+|----|-----------|------|------|
+| D2 | HC-SR505 OUT | INPUT | PIR 인체 감지 |
+| D3 | RCWL-0516 OUT | INPUT | 마이크로파 차량 감지 |
+| D4 | 모드 스위치 | INPUT | HIGH=API / LOW=센서 |
+| D5 | BTN_1 | INPUT_PULLUP | 페이지 이동 |
+| D6 | BTN_2 | INPUT_PULLUP | 페이지 이동 |
+| D7 | BTN_3 | INPUT_PULLUP | 선택/확인 |
+| D8 | BTN_4 | INPUT_PULLUP | 뒤로/취소 |
+| D9 | PAM8610 IN1 | OUTPUT (PWM) | 780Hz 경고음 |
+| D10 | PAM8610 IN2 | OUTPUT (PWM) | 2kHz 경고음 |
+| A4 | OLED SDA | I2C | 하드웨어 I2C |
+| A5 | OLED SCL | I2C | 하드웨어 I2C |
+| 5V | VCC (센서·OLED) | POWER | |
+| GND | GND (전체 공통) | POWER | |
+
+### 3-2. 결선 순서
 1. **전원만** 먼저 (UNO R4 + 센서 쉴드 V5.0 + USB 5V)
 2. **OLED** (I2C SDA/SCL) → 화면 뜨면 OK
 3. **버튼 4개 + 스위치** → 시리얼 확인
