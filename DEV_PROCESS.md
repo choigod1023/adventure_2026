@@ -1,3 +1,4 @@
+#line 1 "/Users/jangjunhyeok/Documents/Arduino/adventure_2026/DEV_PROCESS.md"
 # BionicGPT - 개발 프로세스
 
 > 센서/스피커 실물이 아직 없으므로 **소프트웨어 우선 → 하드웨어 도착 시 통합** 전략.
@@ -179,9 +180,9 @@ void loop() {
 | D2 | RCWL-0516 OUT | J8 | INPUT | 마이크로파 차량 감지 |
 | D5~ | HC-SR505 OUT | J11 | INPUT | PIR 인체 감지 |
 | D6~ | 오디오 출력 → R1 → C1 → GND | J9 | OUTPUT (PWM) | 단일 채널, 780/2kHz 시분할 교대 |
-| D8 | 모드 스위치 | J10 | INPUT | HIGH=API / LOW=센서 |
-| D18 (A4) | OLED SDA | J7 | I2C | 하드웨어 I2C |
-| D19 (A5) | OLED SCL | J7 | I2C | 하드웨어 I2C |
+| D12 | 모드 버튼 (OLED 내장 버튼 D) | J7 | INPUT_PULLUP | 누르면 API ↔ SENSOR 토글 |
+| D18 (A4) | OLED SDA | J7 | I2C | 소프트웨어 I2C (U8g2 `_SW_I2C`) |
+| D19 (A5) | OLED SCL | J7 | I2C | 소프트웨어 I2C (U8g2 `_SW_I2C`) |
 | A0 (D14) | AUX (보조) | J9 | — | 예비 |
 | +5V | VCC (센서·OLED) | J1 | POWER | |
 | GND | GND (전체 공통) | J1/J6 | POWER | |
@@ -192,7 +193,7 @@ void loop() {
 ### 3-2. 결선 순서
 1. **전원만** 먼저 (UNO R4 + USB 5V)
 2. **OLED** (J7, I2C SDA=D18/SCL=D19) → 화면 뜨면 OK
-3. **모드 스위치** (J10, D8) → 시리얼 확인
+3. **모드 버튼** (OLED 내장 버튼 D, D12) → 시리얼 확인
 4. **PIR (HC-SR505)** (J11, D5~) → 1핀, 디지털 입력
 5. **레이다 (RCWL-0516)** (J8, D2) → 1핀, 디지털 입력
 6. **오디오** (J9, D6~ → R1 → C1 → GND) → 스피커 연결

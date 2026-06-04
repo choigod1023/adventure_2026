@@ -2,18 +2,12 @@
  * sensors.ino  -  PIR (HC-SR505, D5) + RCWL-0516 (D2) 차량 감지
  *
  * pollSensors()      : loop 마다 호출. 에지 검출 + 상태 업데이트
- * evaluateSensor()   : 스위치 LOW (센서 모드) 의 위험 평가 (PIR 게이팅)
- *
- * PIR 게이팅 (NOTES_RCWL_FALSEPOSITIVE.md):
- *   - PIR HIGH + RCWL HIGH 동시          → 사용자 본인 움직임 → 무시
- *   - PIR LOW  + RCWL HIGH               → 비-사람 움직임 → 차량 가능성 ⭐
- *   - PIR 최근(5s) HIGH + 현재 LOW + RCWL → 사용자 정지 중 외부 움직임 → 차량 ⭐
+ * evaluateSensor()   : 센서 모드의 위험 평가 — PIR 과 RCWL 이 동시에 HIGH 면 위험.
+ *                      레벨 기반(AND)이라 어느 쪽이 먼저 떴든 둘 다 HIGH 인 순간 트리거.
  */
 
 // Forward declarations
 void updateSensorDisplay();
-
-const unsigned long PIR_RECENT_WINDOW_MS = 5000UL;
 
 void pollSensors() {
   // ── PIR (D5) ──
@@ -21,7 +15,6 @@ void pollSensors() {
   if (pir_now && !sensors.pir_now) {
     Serial.println(F("[PIR ↑]"));
   }
-  if (pir_now) sensors.pir_last_high_ms = millis();
   sensors.pir_now = pir_now;
 
   // ── RCWL (D2) ──
@@ -49,18 +42,9 @@ bool evaluateSensor() {
     updateSensorDisplay();
   }
 
-#if !HAS_RCWL
-  return false;   // RCWL 미부착 시 데모 모드 (위험 트리거 없음)
-#else
-  bool userArrivedRecently =
-    (sensors.pir_last_high_ms != 0) &&
-    ((millis() - sensors.pir_last_high_ms) < PIR_RECENT_WINDOW_MS);
-
-  if (userArrivedRecently && !sensors.pir_now && sensors.radar_now) return true;
-  if (sensors.pir_now && sensors.radar_now)                          return false;
-  if (!userArrivedRecently && sensors.radar_now)                     return true;
-  return false;
-#endif
+  // PIR 과 RCWL 이 동시에 HIGH(11) 면 위험.
+  // 레벨 기반이라 어느 쪽이 먼저 떴든(01→11, 10→11, 00→11) 둘 다 HIGH 인 순간 트리거.
+  return sensors.pir_now && sensors.radar_now;
 }
 
 void updateSensorDisplay() {
@@ -89,3 +73,4 @@ void updateSensorDisplay() {
 
   setDisplayValid("센서 모드", line2, false);
 }
+

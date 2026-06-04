@@ -1,3 +1,4 @@
+#line 1 "/Users/jangjunhyeok/Documents/Arduino/adventure_2026/config.h"
 #pragma once
 
 // ============================================================
@@ -41,10 +42,21 @@
 #define SPAT_ITST_NAME "번동사거리"
 
 // 감시할 보행 신호 방향 — 응답 필드명 + 표시 라벨
-//   북=nt 동=et 남=st 서=wt / 대각: ne se sw nw  (+ "PdsgRmdrCs")
-//   ⚠️ 번동사거리(1063)는 동(et)·북(nt) 보행 신호가 null. 남(st) 사용.
-#define SPAT_PED_FIELD "stPdsgRmdrCs"  // 남(南) 보행
-#define SPAT_PED_LABEL "남 보행"
+//   북=nt 동=et 남=st 서=wt / 대각: ne se sw nw
+//   접미사: PdsgRmdrCs = 보행 잔여, StsgRmdrCs = 직진(차량) 잔여
+//
+//   ⚠️ 번동사거리(1063) raw 응답 분석 결과 (2026-06-03):
+//      - 남(st): stStsgRmdrCs 항상 null → PED/CAR 비교 불가 → phase 판정 안 됨
+//      - 서(wt): wtPdsgRmdrCs / wtStsgRmdrCs 둘 다 값 있음 → 비교 가능 ✓
+//
+//   페이즈 판정 (apis.ino fetchSpat):
+//     활성 페이즈의 RmdrCs 가 더 짧음 (활성 = 곧 종료될 phase) →
+//       PED < CAR → 보행 활성 = 보행 GREEN
+//       CAR < PED → 차량 활성 = 보행 RED
+//       한 쪽만 값 → 그 쪽이 활성
+#define SPAT_PED_FIELD "wtPdsgRmdrCs"  // 서(西) 보행 잔여
+#define SPAT_CAR_FIELD "wtStsgRmdrCs"  // 서(西) 직진(차량) 잔여
+#define SPAT_PED_LABEL "서 보행"
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  2. 핀 배치  (실측 PCB 스키매틱 기준)
@@ -52,20 +64,25 @@
 
 // OLED (I2C) — J7 커넥터 (display)
 //   UNO R4 WiFi 기본값: D18=SDA(=A4), D19=SCL(=A5)
-//   별도 핀 정의 불필요 (U8g2 하드웨어 I2C 사용)
+//   U8g2 소프트웨어 I2C(_SW_I2C) 사용 — SCL/SDA 매크로(=A5/A4)를 비트뱅잉.
+//   물리 핀은 하드웨어 I2C와 동일, 별도 핀 정의 불필요.
 
 // 센서 입력
 #define PIN_RADAR 2 // RCWL-0516 차량 감지 — J8
 #define PIN_PIR 5   // HC-SR505 보행자 감지 — J11
 
 // 입력 버튼 (전부 모멘터리 푸시, INPUT_PULLUP / 눌림 = LOW)
-//   D8  : API 카테고리 ↔ SENSOR 모드 토글 — J10
-//   D9~ : API 모드 직접 선택 (OLED 모듈 내장 버튼) — J7
-#define PIN_BTN_MODE 8   // API ↔ SENSOR 토글
-#define PIN_BTN_BUS 9    // → BUS 모드
-#define PIN_BTN_SUBWAY 10 // → SUBWAY 모드
-#define PIN_BTN_SPAT 11  // → CITS 모드
-// D12 : 예비 (미사용)
+//   D9~D12 : OLED 모듈 내장 4 버튼 (A=D9, B=D10, C=D11, D=D12) — J7
+//     A=SUBWAY, B=BUS, C=CITS, D=API↔SENSOR 토글
+#define PIN_BTN_SUBWAY 9  // A → SUBWAY
+#define PIN_BTN_BUS 10    // B → BUS
+#define PIN_BTN_SPAT 11   // C → CITS
+#define PIN_BTN_MODE 12   // D → API ↔ SENSOR 토글
+
+// 버튼 디바운스용 — Arduino IDE 가 자동으로 함수 prototype 을 파일 최상단에 끼워
+// 넣기 때문에, Btn 을 인자로 받는 함수보다 *먼저* 보이도록 헤더에 정의해 둔다.
+struct Btn { uint8_t pin; bool prev; unsigned long lastMs; };
+// D8 : 예비 (외부 모드 스위치 제거 → 미사용)
 
 // 스피커 출력 (듀오벨: 저음 DAC + 고음 PWM → 하드웨어 저항 합산 → 모노 스피커) — J9
 //   A0(DAC) 사인파 저음 + D6~(PWM) 사각파 고음을 '동시' 출력해 한 스피커로 믹싱.
@@ -81,11 +98,16 @@
 #define POLL_INTERVAL_BUS_MS                                                   \
   15000UL // 버스 (1000회/일 → 15초 = 5760회/일 → ⚠️ 30초 권장)
 #define POLL_INTERVAL_SUBWAY_MS 15000UL
-#define POLL_INTERVAL_SPAT_MS 5000UL // 신호등은 빨라야 함 (잔여 3초 감지)
+// 신호등: HTTPS TLS 핸드셰이크가 매 fetch 2~3 초 블로킹 → 5초마다 하면 freeze 가 자주 보임.
+// 폴링 간격을 늘리고, 그 사이는 spatLiveSec() 로컬 보간이 부드럽게 카운트다운한다.
+// 페이즈 전환은 다음 폴링에서 동기화됨 (최대 N초 지연 허용).
+#define POLL_INTERVAL_SPAT_MS 45000UL
 
 // 위험 판정 임계값
 #define WARN_PEDESTRIAN_SEC 3.0f // 보행자 신호 잔여 N초 미만 → 경고
 #define WARN_DURATION_MS 5000UL  // 위험 해소 후 N ms 유지
+#define WARN_MAX_DURATION_MS                                                   \
+  15000UL // 위험 시작 후 최대 N ms → 계속 감지돼도 강제 해제 (센서 재풀림 전까진 재발 억제)
 
 // 톤 주파수 (듀오벨)
 #define TONE_FREQ_PRIMARY 780    // Hz — 저음, DAC 사인 (ANC 취약점 → 이어폰 뚫음)
@@ -104,4 +126,4 @@
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 #define HAS_RCWL 1  // RCWL-0516 차량 감지 모듈 (D2)
-// PIR(D5), OLED(I2C), 모드 스위치(D8), DuoBell 오디오(A0+D6) 는 기본 활성
+// PIR(D5), OLED(I2C), 모드 버튼(OLED 내장 D12), DuoBell 오디오(A0+D6) 는 기본 활성

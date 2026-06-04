@@ -93,7 +93,21 @@ void drawDetail() {
   u8g2.setFont(u8g2_font_unifont_t_korean1);
   u8g2.setDrawColor(1);
   drawCenteredTrimmed(displayData.line1, 48);
-  drawCenteredTrimmed(displayData.line2, 62);
+
+  // CITS 는 로컬 보간된 잔여시간으로 line2 를 매 프레임 다시 그림 (5초 폴링 사이 매끄러운 카운트다운).
+  // 라벨은 unifont_t_korean1 화면 폭(128px)에 항상 들어가는 "녹색"/"적색" 사용.
+  //   "녹색 12.3s" = 16+16+8+8*5 = 80px (99.9s 까지 여유)
+  if (!sensorMode && currentApiMode == API_SPAT &&
+      spatState.phase != SPAT_PHASE_NONE) {
+    float sec = spatLiveSec();
+    char line2[24];
+    snprintf(line2, sizeof(line2), "%s %d.%ds",
+             spatState.phase == SPAT_PHASE_PED_GREEN ? "녹색" : "적색",
+             (int)sec, (int)(sec * 10) % 10);
+    drawCenteredTrimmed(line2, 62);
+  } else {
+    drawCenteredTrimmed(displayData.line2, 62);
+  }
 }
 
 // 로딩 중 표시 — 현재 모드의 컨텍스트
@@ -140,3 +154,4 @@ void drawCenteredTrimmed(const char* text, int y) {
   }
   u8g2.drawUTF8(56, y, "...");
 }
+

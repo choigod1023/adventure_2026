@@ -1,4 +1,9 @@
+#line 1 "/Users/jangjunhyeok/Documents/Arduino/adventure_2026/NOTES_RCWL_FALSEPOSITIVE.md"
 # RCWL-0516 차량/보행자 구분 문제
+
+> **현재 구현 상태**: `evaluateSensor()` 는 **PIR 과 RCWL 이 동시에 HIGH(AND) 면 위험**으로 판정.
+> 레벨 기반이라 어느 쪽이 먼저 떴든 둘 다 HIGH 인 순간 트리거(01→11, 10→11 모두 동작).
+> 오감지를 더 줄이려면 방안 ①(PIR 게이팅)/②(차폐)/⑤(거리 축소) 참고.
 
 ## 문제 정의
 

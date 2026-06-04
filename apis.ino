@@ -239,7 +239,9 @@ void fetchSubway() {
     const char* sid = item["subwayId"] | "?";
     int sec         = item["barvlDt"]  | 9999;
 
-    bool nowUrgent = (sec < 30) || strstr(m, "곧 도착") || strstr(m, "전역");
+    // 위험: 다음 역(=이 역)까지 30초 미만, "곧 도착", "당역 도착/진입".
+    // ⚠️ "전역(前驛)" = 앞 역 (1~3분 거리) → 위험 아님. 절대 매칭하지 말 것.
+    bool nowUrgent = (sec < 30) || strstr(m, "곧 도착") || strstr(m, "당역");
     if (nowUrgent && !urgent) {
       urgent = true;
       pickedMsg  = m;
@@ -264,6 +266,9 @@ void fetchSubway() {
 //  ③ C-ITS 신호 잔여시간 API (HTTPS)
 // ════════════════════════════════════════════════════════════════
 bool evaluateSpat() {
+  // 로컬 카운트다운 0 도달 시 phase 토글 (다음 폴링 전에 GREEN↔RED 반영).
+  spatTickLocal();
+
   bool dueFetch = modeJustChanged ||
                   (lastFetchSpat == 0) ||
                   (millis() - lastFetchSpat >= POLL_INTERVAL_SPAT_MS);
@@ -273,7 +278,12 @@ bool evaluateSpat() {
     lastFetchSpat = millis();
     modeJustChanged = false;
   }
-  return displayData.valid && displayData.danger;
+  // 스몸비 경고 모델: 사용자가 *실제로 횡단보도를 건너고 있는* 순간에 시선을 들게 한다.
+  //   - 보행 GREEN → 위험 (지금 건너는 중 → 고개 들어!)
+  //   - 보행 RED   → 정상 (대기 중, 즉각 위험 아님)
+  //   - 미운영      → 정상
+  if (!displayData.valid) return false;
+  return spatState.phase == SPAT_PHASE_PED_GREEN;
 }
 
 void fetchSpat() {
@@ -311,9 +321,10 @@ void fetchSpat() {
   //    → 서버가 큰 응답을 줘도 메모리 사용량이 일정하게 유지됨.
   http.skipResponseHeaders();   // 본문 시작 위치로 이동 (이게 없으면 JSON 오류)
 
-  // 배열의 각 원소에서 우리가 쓰는 1개 보행 방향만 남김 (나머지는 파싱 중 버려짐)
+  // 페이즈 판정용으로 보행+차량 두 필드 모두 살림. 나머진 흘려보냄.
   JsonDocument filter;
   filter[0][SPAT_PED_FIELD] = true;
+  filter[0][SPAT_CAR_FIELD] = true;
 
   JsonDocument doc;
   DeserializationError err =
@@ -330,29 +341,58 @@ void fetchSpat() {
     return;
   }
 
-  // ── 번동사거리 동(東) 보행 신호 1개만 본다 ──
-  //  값 단위: 센티초(1/10초). null = 보행 신호 없음. 36001 = 신호 미운영/점멸.
-  //
-  //  ⚠️ 한계: 이 엔드포인트는 "현재 페이즈의 잔여시간"만 주고,
-  //     보행 GREEN 인지 RED 인지 알려주는 필드가 없음.
-  //     → 잔여 < 임계값을 "곧 신호 바뀜 = 위험"으로 해석 (보수적 경고).
+  // ── 페이즈 결정 ──
+  //  값 단위: 센티초(1/10초). null/36001 = 해당 페이즈 비활성.
+  //   PED 필드 유효 → 보행 GREEN, 잔여시간 줄어드는 중
+  //   CAR 필드 유효 (PED 는 비활성) → 보행 RED (차량 GREEN 활성)
+  //   둘 다 비활성 → 미운영
   JsonObject item = doc.as<JsonArray>()[0];
-  JsonVariant v = item[SPAT_PED_FIELD];
+  JsonVariant ped = item[SPAT_PED_FIELD];
+  JsonVariant car = item[SPAT_CAR_FIELD];
 
-  if (v.isNull() || v.as<float>() >= SPAT_SENTINEL) {
-    Serial.println(F("  " SPAT_PED_LABEL ": 미운영"));
-    setDisplayValid(SPAT_ITST_NAME, SPAT_PED_LABEL " 신호 없음", false);
+  // 🔎 진단 로그: 실제 신호등 색을 보며 두 raw 값과 대조하면 API 의미가 드러남.
+  //   해석 단서: "ped=null/36001 그리고 car=값" 일 때 실제로 빨강? 초록?
+  Serial.print(F("  [raw] "));
+  Serial.print(SPAT_PED_FIELD); Serial.print(F("="));
+  if (ped.isNull()) Serial.print(F("null")); else Serial.print(ped.as<float>(), 0);
+  Serial.print(F(" "));
+  Serial.print(SPAT_CAR_FIELD); Serial.print(F("="));
+  if (car.isNull()) Serial.print(F("null")); else Serial.print(car.as<float>(), 0);
+  Serial.println();
+
+  bool pedHas = !ped.isNull() && ped.as<float>() < SPAT_SENTINEL;
+  bool carHas = !car.isNull() && car.as<float>() < SPAT_SENTINEL;
+  float pedSec = pedHas ? ped.as<float>() / 10.0f : 0.0f;
+  float carSec = carHas ? car.as<float>() / 10.0f : 0.0f;
+
+  // 활성 phase = RmdrCs 가 더 짧은 쪽 (그 phase 가 곧 종료될 거니까 = 지금 활성).
+  // 둘 다 값 있을 때만 비교 가능. 한 쪽만 값 있으면 그쪽이 활성.
+  bool pedGreen;  // 보행 GREEN 활성 여부
+  float liveSec;  // 화면/위험 판정에 쓸 잔여시간
+  if (pedHas && carHas) {
+    pedGreen = (pedSec < carSec);
+    liveSec  = pedGreen ? pedSec : carSec;
+  } else if (pedHas) {
+    pedGreen = true;
+    liveSec  = pedSec;
+  } else if (carHas) {
+    pedGreen = false;
+    liveSec  = carSec;
+  } else {
+    spatState.phase = SPAT_PHASE_NONE;
+    Serial.println(F("  미운영"));
+    setDisplayValid(SPAT_ITST_NAME, "신호 없음", false);
     return;
   }
 
-  float sec = v.as<float>() / 10.0f;
-  char detail[40];
-  snprintf(detail, sizeof(detail), SPAT_PED_LABEL " %d.%ds",
-           (int)sec, (int)(sec * 10) % 10);
-  bool danger = (sec < WARN_PEDESTRIAN_SEC);
-  Serial.print(F("  " SPAT_PED_LABEL ": ")); Serial.print(sec, 1);
-  Serial.println(danger ? F("s [위험]") : F("s [정상]"));
-  setDisplayValid(SPAT_ITST_NAME, detail, danger);
+  spatState.phase = pedGreen ? SPAT_PHASE_PED_GREEN : SPAT_PHASE_PED_RED;
+  spatState.secAtSnapshot = liveSec;
+  spatState.snapshotMs = millis();
+
+  Serial.print(pedGreen ? F("  보행 GREEN ") : F("  보행 RED   "));
+  Serial.print(liveSec, 1);
+  Serial.println(pedGreen ? F("s [위험]") : F("s [정상]"));
+  setDisplayValid(SPAT_ITST_NAME, pedGreen ? "녹색" : "적색", pedGreen);
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -371,3 +411,4 @@ void setDisplayValid(const char* line1, const char* line2, bool danger) {
 void setDisplayError(const char* line1, const char* line2) {
   setDisplayValid(line1, line2, false);
 }
+

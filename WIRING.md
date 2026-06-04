@@ -1,3 +1,4 @@
+#line 1 "/Users/jangjunhyeok/Documents/Arduino/adventure_2026/WIRING.md"
 # adventure_2026 - 결선 가이드
 
 본 문서는 [`config.h`](./config.h) 의 핀 매핑 + PCB 실측 스키매틱 기준 결선 방법입니다.
@@ -12,14 +13,14 @@
 | **D2** | RCWL-0516 OUT | J8 | INPUT | 마이크로파 차량 감지 |
 | **D5** | HC-SR505 OUT | J11 | INPUT | PIR 인체 감지 |
 | **D6 (PWM)** | DuoBell 고음 출력 | J9 | OUTPUT | 2kHz 사각파 → R/C 합산 → 스피커 |
-| **D8** | 모드 버튼 (토글) | J10 | INPUT_PULLUP | **누르면 API ↔ SENSOR 전환** |
+| **D8** | (예비) | — | — | 외부 모드 스위치 제거 → 미사용 |
 | **D9** | API 버튼 → BUS | J7 | INPUT_PULLUP | OLED 모듈 내장 버튼 |
 | **D10** | API 버튼 → SUBWAY | J7 | INPUT_PULLUP | OLED 모듈 내장 버튼 |
 | **D11** | API 버튼 → CITS | J7 | INPUT_PULLUP | OLED 모듈 내장 버튼 |
-| **D12** | (예비) | J7 | — | 미사용 |
+| **D12** | 모드 버튼 (토글) | J7 | INPUT_PULLUP | OLED 내장 버튼 D — **누르면 API ↔ SENSOR 전환** |
 | **A0 (DAC)** | DuoBell 저음 출력 | J9 | OUTPUT (DAC) | 780Hz 사인파 → R 합산 → 스피커 |
-| **A4 (D18)** | OLED SDA | J7 | I2C | 하드웨어 I2C |
-| **A5 (D19)** | OLED SCL | J7 | I2C | 하드웨어 I2C |
+| **A4 (D18)** | OLED SDA | J7 | I2C | 소프트웨어 I2C (U8g2 `_SW_I2C`) |
+| **A5 (D19)** | OLED SCL | J7 | I2C | 소프트웨어 I2C (U8g2 `_SW_I2C`) |
 | **+5V** | VCC (센서·OLED) | J1 | POWER | |
 | **GND** | GND (전체 공통) | J1/J6 | POWER | |
 
@@ -41,6 +42,7 @@ SDA   ──→   A4 / D18
 ```
 
 - I2C 주소 0x3C 자동 인식 (U8g2 NONAME 드라이버).
+- 소프트웨어 I2C(`_SW_I2C`)로 SCL/SDA(=A5/A4) 비트뱅잉. 물리 결선은 하드웨어 I2C와 동일.
 
 ### 2. HC-SR505 (PIR, 인체 감지) — J11
 
@@ -69,29 +71,25 @@ OUT   ──→   D2       (config.h: PIN_RADAR)
 - 부품 미부착 시 `config.h` 의 `HAS_RCWL=0` 으로 두면 D2를 INPUT으로 잡지 않아 floating 노이즈 회피.
 - 사용자 본인 오감지 방지는 [`NOTES_RCWL_FALSEPOSITIVE.md`](./NOTES_RCWL_FALSEPOSITIVE.md) 참고.
 
-### 4. 모드 버튼들 (모멘터리 푸시) — J10 + J7
+### 4. 모드 버튼들 (OLED 모듈 내장 4 버튼) — J7
 
-모든 버튼은 한쪽 단자를 핀에, 반대쪽을 GND에 연결. `INPUT_PULLUP` 이라 외부 저항 불필요.
+네 버튼 모두 OLED 모듈에 내장. `INPUT_PULLUP` 이라 외부 저항 불필요.
 누르면 LOW (눌림 에지에서 동작), 떼면 HIGH 복귀. 디바운스 20ms (`config.h: DEBOUNCE_MS`).
 
 ```
-모드 버튼 (J10)         UNO R4
-──────────────────────────────
-버튼 한쪽 ──→ D8 (PIN_BTN_MODE)   반대쪽 ──→ GND
-
 OLED 모듈 내장 버튼 (J7)   UNO R4
 ──────────────────────────────
 버튼 BUS    ──→ D9  (PIN_BTN_BUS)
 버튼 SUBWAY ──→ D10 (PIN_BTN_SUBWAY)
 버튼 CITS   ──→ D11 (PIN_BTN_SPAT)
-버튼 (예비) ──→ D12 (미사용)
+버튼 D      ──→ D12 (PIN_BTN_MODE)   ← API ↔ SENSOR 토글
 ```
 
 **동작**:
-- **D8** 누름 → API 카테고리 ↔ SENSOR 모드 **토글**
+- **D12 (OLED 버튼 D)** 누름 → API 카테고리 ↔ SENSOR 모드 **토글**
 - **D9 / D10 / D11** 누름 → 각각 **BUS / SUBWAY / CITS** API 모드로 직접 점프
   (SENSOR 모드 상태였어도 누르면 해당 API 모드로 복귀)
-- 토글 스위치(SPDT)는 더 이상 사용 안 함 — 푸시 버튼으로 대체됨.
+- 외부 모드 스위치(J10, D8)는 제거됨 — OLED 내장 버튼 D(D12)로 대체. D8 은 예비.
 
 ### 5. DuoBell 오디오 (DAC + PWM 합산) — J9
 
@@ -127,7 +125,7 @@ D6~(PWM) ──[ R1 10kΩ ]──┘
 
 1. **UNO R4 만 USB 연결** → 시리얼 모니터 부팅 로그 확인
 2. **OLED I2C 연결** (J7) → "부팅 중" 화면 표시되면 OK
-3. **모드 버튼** (D8, J10) → 누르면 `[버튼] 토글 → API/SENSOR`, 디스플레이 버튼(D9~D11) → `[버튼] API → BUS/SUBWAY/CITS` 출력
+3. **OLED 내장 버튼** → 버튼 D(D12) 누르면 `[버튼] 토글 → API/SENSOR`, 버튼 BUS/SUBWAY/CITS(D9~D11) → `[버튼] API → BUS/SUBWAY/CITS` 출력
 4. **PIR** (D5, J11) → 시리얼에 `[PIR ↑]` 출력 확인 (1분 안정화 후)
 5. **RCWL** (D2, J8) → `[RADAR ↑] #N` 출력 확인 (config.h `HAS_RCWL=1` 로 활성화)
 6. **DuoBell** (A0 + D6, J9) → 위험 상태에서 두 톤이 한 스피커로 동시 출력되는지 확인
@@ -140,7 +138,7 @@ D6~(PWM) ──[ R1 10kΩ ]──┘
 | 증상 | 원인/해결 |
 |---|---|
 | OLED 안 켜짐 | I2C 주소(0x3C/0x3D) 확인. SDA/SCL 바뀐 거 아닌지 확인. |
-| 버튼 눌러도 모드 안 바뀜 | 버튼 한쪽이 핀(D8/D9/D10/D11), 반대쪽이 GND 인지 확인. 시리얼에 `[버튼]` 로그 안 뜨면 결선/디바운스(`DEBOUNCE_MS`) 점검. |
+| 버튼 눌러도 모드 안 바뀜 | OLED 내장 버튼(D9/D10/D11/D12) 결선 확인. 시리얼에 `[버튼]` 로그 안 뜨면 결선/디바운스(`DEBOUNCE_MS`) 점검. |
 | RCWL 계속 HIGH | 부팅 1분 안. 또는 주변 움직임 많음. 구리테이프 차폐 권장. |
 | PIR 반응 늦음 | HC-SR505 자체 ~2.5초 지연. 정상. |
 | 톤 한쪽만 들림 (저음만/고음만) | R_a 또는 R1 단선. 합산점에서 양쪽 신호 모두 측정. |

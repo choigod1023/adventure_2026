@@ -1,3 +1,4 @@
+#line 1 "/Users/jangjunhyeok/Documents/Arduino/adventure_2026/API_GUIDE.md"
 # BionicGPT - 외부 API 사용 가이드
 
 ## 프로젝트 개요
@@ -297,7 +298,7 @@ if (ntPdsg < 36001.0f && (ntPdsg / 10.0f) < 3.0f) {
 3. **지하철 API 호출 모듈** (`subway_api.h/.cpp`)
    - ArduinoJson 사용
 4. **C-ITS 모듈** (data_id=10120 정보 확보 후)
-5. **모드 스위치 + 4버튼 처리**
+5. **OLED 내장 4버튼 처리** (버튼 D=모드 토글 + BUS/SUBWAY/CITS 선택)
 6. **PAM8610 톤 출력** (`tone()` 함수 또는 DAC)
 7. **센서 통합** (실물 도착 후)
 
