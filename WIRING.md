@@ -1,4 +1,3 @@
-#line 1 "/Users/jangjunhyeok/Documents/Arduino/adventure_2026/WIRING.md"
 # adventure_2026 - 결선 가이드
 
 본 문서는 [`config.h`](./config.h) 의 핀 매핑 + PCB 실측 스키매틱 기준 결선 방법입니다.
