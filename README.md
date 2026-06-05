@@ -1,4 +1,3 @@
-#line 1 "/Users/jangjunhyeok/Documents/Arduino/adventure_2026/README.md"
 # adventure_2026 — 스몸비(보행자) 안전 경고 장치
 
 Arduino UNO R4 WiFi 기반 보행자 위험 감지/경고 장치.
