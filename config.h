@@ -113,6 +113,16 @@ struct Btn { uint8_t pin; bool prev; unsigned long lastMs; };
 #define TONE_FREQ_PRIMARY 780    // Hz — 저음, DAC 사인 (ANC 취약점 → 이어폰 뚫음)
 #define TONE_FREQ_SECONDARY 2000 // Hz — 고음, PWM 사각 (습관화 방지 → 귀 깨움)
 
+// 경고음 펄싱 + 고음 스윕 (정적 드론 대신; 돌출/습관화 방지/in-ear ANC 회피)
+//   · 짧은 on/off 펄싱이 정적음보다 잘 알아차려지고, 음악의 순간 빈틈을 더 자주 통과.
+//   · 고음을 왕복 스윕하면 스펙트럼이 움직여 ANC 적응형 필터가 락온하기 어렵고
+//     습관화도 방지됨. 사각파 배음(6k/10kHz)이 in-ear ANC 침투대역을 함께 커버.
+#define WARN_PULSE_ON_MS   150   // 한 발 길이 (ms)
+#define WARN_PULSE_OFF_MS   90   // 펄스 사이 무음 (ms)
+#define WARN_HF_SWEEP        1   // 1=고음 TONE_FREQ_SECONDARY↔WARN_SWEEP_TOP_HZ 왕복, 0=고정
+#define WARN_SWEEP_TOP_HZ 3500   // 고음 스윕 상단 (Hz)
+#define WARN_SWEEP_MS      120   // 스윕 편도 시간 (ms)
+
 // 디바운스
 #define DEBOUNCE_MS 20
 #define LONG_PRESS_MS 800

@@ -313,24 +313,44 @@ void updateDangerState(bool detected) {
 }
 
 // ════════════════════════════════════════════════════════════════
-//  오디오 (DuoBell — 780Hz DAC + 2kHz PWM 동시 출력)
+//  오디오 (DuoBell — 780Hz DAC 사인 + 고음 PWM, 빠른 펄싱 + 고음 스윕)
+//    · 정적 드론 대신 짧은 on/off 펄싱 → 돌출↑ / ANC 적응 방해 / 음악 빈틈 통과
+//    · 고음 2.0~3.5kHz 왕복 스윕(스펙트럼 모션) → 습관화 방지 + in-ear ANC 회피
+//      (사각파 배음이 6k/10kHz도 방사 → 우리가 찾은 3–6kHz 침투대역 커버)
 // ════════════════════════════════════════════════════════════════
 void warnOn() {
-  if (warnAudioOn) return;
-  wave.amplitude(0.8);                       // 저음 ON
-  tone(PIN_SPK_PWM, TONE_FREQ_SECONDARY);    // 고음 ON
+  bool justStarted = !warnAudioOn;             // 펄스 시작(OFF→ON) 에지
+  wave.amplitude(0.8);                         // 저음 780Hz 사인 ON (재호출 무해)
+
+  int f = TONE_FREQ_SECONDARY;
+#if WARN_HF_SWEEP
+  // 삼각 스윕: TONE_FREQ_SECONDARY ↔ WARN_SWEEP_TOP_HZ 왕복
+  unsigned long sp = millis() % (2UL * WARN_SWEEP_MS);
+  unsigned long up = (sp < WARN_SWEEP_MS) ? sp : (2UL * WARN_SWEEP_MS - sp);
+  f = TONE_FREQ_SECONDARY +
+      (int)((long)(WARN_SWEEP_TOP_HZ - TONE_FREQ_SECONDARY) * up / WARN_SWEEP_MS);
+#endif
+
+  static int lastToneHz = -1;
+  if (justStarted || f != lastToneHz) {        // 펄스 시작 또는 주파수 변화 시만 갱신
+    tone(PIN_SPK_PWM, f);
+    lastToneHz = f;
+  }
   warnAudioOn = true;
 }
 
 void warnOff() {
   if (!warnAudioOn) return;
-  wave.amplitude(0.0);                       // 저음 OFF (freq 유지, 진폭만 0)
-  noTone(PIN_SPK_PWM);                       // 고음 OFF
+  wave.amplitude(0.0);                          // 저음 OFF (freq 유지, 진폭만 0)
+  noTone(PIN_SPK_PWM);                          // 고음 OFF
   warnAudioOn = false;
 }
 
 void driveAudio() {
-  if (dangerActive) warnOn();
-  else              warnOff();
+  if (!dangerActive) { warnOff(); return; }
+  // 위험 동안: 짧은 on/off 펄싱 (정적 드론 대신)
+  unsigned long period = (unsigned long)WARN_PULSE_ON_MS + WARN_PULSE_OFF_MS;
+  if ((millis() % period) < (unsigned long)WARN_PULSE_ON_MS) warnOn();
+  else                                                       warnOff();
 }
 
