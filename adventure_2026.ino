@@ -10,10 +10,11 @@
  *   네 버튼 모두 OLED 모듈 내장. A/B/C 는 SENSOR 상태였어도 누르면 해당 API 모드로 복귀.
  *   현재 활성 모드의 위험 트리거만 경고 발생.
  *
- * 오디오 (DuoBell — 한 스피커에 두 톤 동시 출력):
- *   A0 (DAC) = 780Hz 사인파 (저음, ANC 취약점)
- *   D6 (PWM) = 2kHz   사각파 (고음, 습관화 방지)
- *   하드웨어 저항 합산으로 모노 스피커 1개에 믹싱.
+ * 오디오 (alert_pcm.h — sound.py 와 '동일한' 합성 경고음을 PCM 그대로 재생):
+ *   A0 (DAC) = 12bit PCM, 22050Hz. FspTimer ISR 이 샘플을 한 발(0.15s)씩 흘려보냄.
+ *     PCM 안에 cutthrough 스윕 + 벨 배음 + 온셋 클릭 + 750Hz 보험이 이미 믹싱돼 있어
+ *     단일 DAC 채널만으로 sound.py 결과물이 그대로 재생된다.
+ *   D6 (PWM) = 미사용(예비). 옛 DuoBell 2톤 합산 방식은 PCM 재생으로 대체됨.
  *
  * 파일 분할 (Arduino IDE 자동 병합):
  *   adventure_2026.ino  ← 본 파일: 전역 상태, setup/loop, 모드 매니저, 오디오
@@ -26,7 +27,7 @@
  *   - ArduinoHttpClient   (라이브러리 매니저)
  *   - ArduinoJson v7      (Benoit Blanchon)
  *   - U8g2lib             (oliver)
- *   - analogWave          (UNO R4 보드패키지 기본 포함)
+ *   - FspTimer            (UNO R4 보드패키지 기본 포함)
  */
 
 #include <WiFiS3.h>
@@ -34,10 +35,11 @@
 #include <ArduinoJson.h>
 #include <U8g2lib.h>
 #include <Wire.h>
-#include "analogWave.h"
+#include "FspTimer.h"     // UNO R4 하드웨어 타이머 → 22050Hz 샘플 ISR
 
 #include "secrets.h"
 #include "config.h"
+#include "alert_pcm.h"    // sound.py 에서 렌더한 경고음 PCM (12bit DAC, 22050Hz, 0.15s 1발)
 
 // ════════════════════════════════════════════════════════════════
 //  전역 상태
@@ -146,9 +148,45 @@ const int OLED_MAX_TEXT_WIDTH = 124;
 WiFiClient    plainSock;
 WiFiSSLClient sslSock;
 
-// ─── 오디오 (DuoBell) ───
-analogWave wave(DAC);   // A0 = DAC, 저음 사인
-bool warnAudioOn = false;
+// ─── 오디오 (PCM 경고음 재생) ───
+//   FspTimer 가 ALERT_RATE(22050Hz) 로 ISR 을 돌리며 A0 DAC 에 한 샘플씩 출력.
+//   s_pcmActive=true 인 동안만 ALERT_PCM 을 흘려보내고, 끝까지 가면 스스로 false 로.
+//   driveAudio() 가 위험 중에 gap 을 두고 다시 arm → sound.py 의 repeat() 펄싱 재현.
+FspTimer        audioTimer;
+volatile uint32_t s_pcmIdx    = 0;      // 현재 재생 중인 샘플 인덱스
+volatile bool     s_pcmActive = false;  // true = 한 발 재생 중
+bool          prevPcmActive   = false;  // 펄스 종료 에지 검출용
+unsigned long lastPulseEndMs  = 0;      // 마지막 펄스가 끝난 시각 (gap 계산)
+
+// DAC 에 한 샘플 즉시 출력 (12bit, 0..4095). analogWriteResolution(12) 가 전제.
+static inline void dacWrite(uint16_t v) { analogWrite(DAC, v); }
+
+// 22050Hz 마다 호출되는 ISR — 다음 PCM 샘플을 DAC 로.
+void audioISR(timer_callback_args_t * /*arg*/) {
+  if (!s_pcmActive) return;                       // 무음 구간엔 아무것도 안 함
+  dacWrite(pgm_read_word(&ALERT_PCM[s_pcmIdx]));
+  if (++s_pcmIdx >= (uint32_t)ALERT_LEN) {        // 한 발(0.15s) 끝
+    s_pcmIdx = 0;
+    s_pcmActive = false;                          // driveAudio 가 gap 후 재arm
+  }
+}
+
+// FspTimer 를 ALERT_RATE 로 시작 (항상 돌고, s_pcmActive 로 게이팅).
+bool audioTimerBegin() {
+  uint8_t type;
+  int8_t ch = FspTimer::get_available_timer(type);
+  if (ch < 0) {                                   // 남는 타이머 없으면 PWM 예약분에서
+    FspTimer::force_use_of_pwm_reserved_timer();
+    ch = FspTimer::get_available_timer(type, true);
+  }
+  if (ch < 0) return false;
+  if (!audioTimer.begin(TIMER_MODE_PERIODIC, type, ch,
+                        (float)ALERT_RATE, 0.0f, audioISR)) return false;
+  if (!audioTimer.setup_overflow_irq()) return false;
+  if (!audioTimer.open())  return false;
+  if (!audioTimer.start()) return false;
+  return true;
+}
 
 // ════════════════════════════════════════════════════════════════
 //  setup / loop
@@ -168,12 +206,11 @@ void setup() {
   pinMode(PIN_BTN_BUS,    INPUT_PULLUP);
   pinMode(PIN_BTN_SUBWAY, INPUT_PULLUP);
   pinMode(PIN_BTN_SPAT,   INPUT_PULLUP);
-  pinMode(PIN_SPK_PWM,   OUTPUT);
 
-  // 오디오: 780Hz 사인 준비 (진폭 0 → 무음 상태)
-  wave.sine(TONE_FREQ_PRIMARY);
-  wave.amplitude(0.0);
-  noTone(PIN_SPK_PWM);
+  // 오디오: DAC 12bit 모드 + 무음(중앙값)으로 파킹 후 22050Hz 타이머 가동
+  analogWriteResolution(12);          // analogWrite(DAC,v) 의 v 를 0..4095 로 직접 매핑
+  dacWrite(ALERT_MID);                // DAC 초기화 + DC 중앙값(무음)으로 시작
+  if (!audioTimerBegin()) Serial.println(F("[오디오] 타이머 확보 실패 — 무음"));
 
   // OLED
   Wire.begin();
@@ -313,44 +350,30 @@ void updateDangerState(bool detected) {
 }
 
 // ════════════════════════════════════════════════════════════════
-//  오디오 (DuoBell — 780Hz DAC 사인 + 고음 PWM, 빠른 펄싱 + 고음 스윕)
-//    · 정적 드론 대신 짧은 on/off 펄싱 → 돌출↑ / ANC 적응 방해 / 음악 빈틈 통과
-//    · 고음 2.0~3.5kHz 왕복 스윕(스펙트럼 모션) → 습관화 방지 + in-ear ANC 회피
-//      (사각파 배음이 6k/10kHz도 방사 → 우리가 찾은 3–6kHz 침투대역 커버)
+//  오디오 (alert_pcm.h — sound.py 합성음을 PCM 그대로 펄싱 재생)
+//    · 한 발 = ALERT_PCM 전체(0.15s). PCM 안에 스윕/벨/온셋/보험이 이미 믹싱됨.
+//    · 위험 동안 한 발 재생 → WARN_PULSE_OFF_MS 무음(gap) → 다시 재생.
+//      = sound.py 의 repeat(gap_sec) 펄싱을 펌웨어에서 재현 (정적 드론보다 돌출↑).
+//    · 실제 샘플 출력은 audioISR(22050Hz) 이 담당. 여기선 arm/gap 만 관리(논블로킹).
 // ════════════════════════════════════════════════════════════════
-void warnOn() {
-  bool justStarted = !warnAudioOn;             // 펄스 시작(OFF→ON) 에지
-  wave.amplitude(0.8);                         // 저음 780Hz 사인 ON (재호출 무해)
-
-  int f = TONE_FREQ_SECONDARY;
-#if WARN_HF_SWEEP
-  // 삼각 스윕: TONE_FREQ_SECONDARY ↔ WARN_SWEEP_TOP_HZ 왕복
-  unsigned long sp = millis() % (2UL * WARN_SWEEP_MS);
-  unsigned long up = (sp < WARN_SWEEP_MS) ? sp : (2UL * WARN_SWEEP_MS - sp);
-  f = TONE_FREQ_SECONDARY +
-      (int)((long)(WARN_SWEEP_TOP_HZ - TONE_FREQ_SECONDARY) * up / WARN_SWEEP_MS);
-#endif
-
-  static int lastToneHz = -1;
-  if (justStarted || f != lastToneHz) {        // 펄스 시작 또는 주파수 변화 시만 갱신
-    tone(PIN_SPK_PWM, f);
-    lastToneHz = f;
-  }
-  warnAudioOn = true;
-}
-
-void warnOff() {
-  if (!warnAudioOn) return;
-  wave.amplitude(0.0);                          // 저음 OFF (freq 유지, 진폭만 0)
-  noTone(PIN_SPK_PWM);                          // 고음 OFF
-  warnAudioOn = false;
-}
-
 void driveAudio() {
-  if (!dangerActive) { warnOff(); return; }
-  // 위험 동안: 짧은 on/off 펄싱 (정적 드론 대신)
-  unsigned long period = (unsigned long)WARN_PULSE_ON_MS + WARN_PULSE_OFF_MS;
-  if ((millis() % period) < (unsigned long)WARN_PULSE_ON_MS) warnOn();
-  else                                                       warnOff();
+  // 펄스 종료 에지(ISR 이 s_pcmActive 를 내림) 검출 → gap 시작 + DAC 무음 파킹
+  if (prevPcmActive && !s_pcmActive) {
+    lastPulseEndMs = millis();
+    dacWrite(ALERT_MID);                 // 중앙값으로 파킹(DC 험/팝 방지)
+  }
+  prevPcmActive = s_pcmActive;
+
+  if (!dangerActive) {                    // 위험 아니면 즉시 정지
+    if (s_pcmActive) { s_pcmActive = false; dacWrite(ALERT_MID); }
+    return;
+  }
+
+  if (s_pcmActive) return;                                 // 한 발 재생 중
+  if (millis() - lastPulseEndMs < (unsigned long)WARN_PULSE_OFF_MS) return;  // gap 대기
+
+  // 다음 한 발 arm (ISR 이 0 번 샘플부터 흘려보냄)
+  s_pcmIdx = 0;
+  s_pcmActive = true;
 }
 

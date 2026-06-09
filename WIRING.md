@@ -11,13 +11,13 @@
 |----|-----------|--------|------|------|
 | **D2** | RCWL-0516 OUT | J8 | INPUT | 마이크로파 차량 감지 |
 | **D5** | HC-SR505 OUT | J11 | INPUT | PIR 인체 감지 |
-| **D6 (PWM)** | DuoBell 고음 출력 | J9 | OUTPUT | 2kHz 사각파 → R/C 합산 → 스피커 |
+| **D6 (PWM)** | (구 DuoBell 고음) 미사용 | J9 | — | PCM 재생으로 대체 → 예비 |
 | **D8** | (예비) | — | — | 외부 모드 스위치 제거 → 미사용 |
 | **D9** | API 버튼 → BUS | J7 | INPUT_PULLUP | OLED 모듈 내장 버튼 |
 | **D10** | API 버튼 → SUBWAY | J7 | INPUT_PULLUP | OLED 모듈 내장 버튼 |
 | **D11** | API 버튼 → CITS | J7 | INPUT_PULLUP | OLED 모듈 내장 버튼 |
 | **D12** | 모드 버튼 (토글) | J7 | INPUT_PULLUP | OLED 내장 버튼 D — **누르면 API ↔ SENSOR 전환** |
-| **A0 (DAC)** | DuoBell 저음 출력 | J9 | OUTPUT (DAC) | 780Hz 사인파 → R 합산 → 스피커 |
+| **A0 (DAC)** | 경고음 PCM 출력 | J9 | OUTPUT (DAC) | sound.py PCM 22050Hz → R/C → 스피커 |
 | **A4 (D18)** | OLED SDA | J7 | I2C | 소프트웨어 I2C (U8g2 `_SW_I2C`) |
 | **A5 (D19)** | OLED SCL | J7 | I2C | 소프트웨어 I2C (U8g2 `_SW_I2C`) |
 | **+5V** | VCC (센서·OLED) | J1 | POWER | |
@@ -90,21 +90,21 @@ OLED 모듈 내장 버튼 (J7)   UNO R4
   (SENSOR 모드 상태였어도 누르면 해당 API 모드로 복귀)
 - 외부 모드 스위치(J10, D8)는 제거됨 — OLED 내장 버튼 D(D12)로 대체. D8 은 예비.
 
-### 5. DuoBell 오디오 (DAC + PWM 합산) — J9
+### 5. 경고음 오디오 (단일 DAC PCM 재생) — J9
 
 ```
-A0 (DAC) ──[ R_a 10kΩ ]──┐
-                          ├──[ C 1μF ]── 스피커 (+)
-D6~(PWM) ──[ R1 10kΩ ]──┘
-                                          스피커 (-) ── GND
+A0 (DAC) ──[ R_a 10kΩ ]──[ C 1μF ]── 스피커 (+)
+                                       스피커 (-) ── GND
+        (D6 는 미사용 — R1 분기는 그대로 둬도 무방, 신호 없음)
 ```
 
-- **A0 (DAC)**: 780Hz **사인파** 저음. `analogWave` 라이브러리로 출력.
-- **D6 (PWM)**: 2kHz **사각파** 고음. `tone()` 함수로 출력.
-- 두 신호를 저항(R_a, R1)으로 가산 후 커패시터 C 거쳐 한 스피커에 합쳐서 출력.
-- 듀얼 채널 앰프(PAM8610 등) 불필요. 음량이 부족하면 단일 채널 앰프 추가 가능.
+- **A0 (DAC)**: `alert_pcm.h` 의 12bit PCM 을 **22050Hz** 로 재생 (`FspTimer` ISR + `analogWrite(DAC, …)`).
+  `sound.py` 의 합성음(3–5kHz 스윕 + 벨 배음 + 온셋 클릭 + 750Hz 보험)이 PCM 한 채널에 이미 다 섞여 있어 **DAC 한 개만으로** 동일한 소리가 난다.
+- **R_a + C**: DAC 계단 출력을 매끈하게 깎는 1차 RC 로우패스(재구성 필터) 겸 DC 차단. 기존 합산망을 그대로 재사용하면 된다.
+- **D6 (PWM)**: 더 이상 쓰지 않음. R1 분기는 떼도 되고, 둬도 무방(신호 없음).
+- 음량이 부족하면 단일 채널 D급 앰프(PAM8403 등)를 R/C 뒤에 추가.
 
-> **DuoBell 의미**: 한 스피커에서 두 톤이 동시에 울려서 "더블 벨" 같은 소리. ANC(노이즈 캔슬링) 이어폰 유저에게도 잘 들리는 780Hz 와 귀가 습관화하기 어려운 2kHz 가 함께 출력됩니다.
+> **변경 이력**: 과거에는 A0 사인(780Hz) + D6 사각(2kHz) 을 저항 합산하는 "DuoBell" 2톤 방식이었으나, `sound.py` 와 **동일한** 음색을 내기 위해 미리 렌더한 PCM(`alert_pcm.h`)을 DAC 로 그대로 재생하는 방식으로 교체됨. 펄싱 간격만 `config.h: WARN_PULSE_OFF_MS` 로 조절.
 
 ---
 
@@ -127,8 +127,9 @@ D6~(PWM) ──[ R1 10kΩ ]──┘
 3. **OLED 내장 버튼** → 버튼 D(D12) 누르면 `[버튼] 토글 → API/SENSOR`, 버튼 BUS/SUBWAY/CITS(D9~D11) → `[버튼] API → BUS/SUBWAY/CITS` 출력
 4. **PIR** (D5, J11) → 시리얼에 `[PIR ↑]` 출력 확인 (1분 안정화 후)
 5. **RCWL** (D2, J8) → `[RADAR ↑] #N` 출력 확인 (config.h `HAS_RCWL=1` 로 활성화)
-6. **DuoBell** (A0 + D6, J9) → 위험 상태에서 두 톤이 한 스피커로 동시 출력되는지 확인
-   - 단독 검증은 main에 있던 [DuoBell 테스트 코드](https://github.com/choigod1023/adventure_2026/blob/main/adventure_2026.ino) 의 `warnOn/warnOff` 패턴 활용
+6. **경고음** (A0, J9) → 위험 상태에서 스피커로 `sound.py` 경고음이 펄싱 재생되는지 확인
+   - 부팅 직후 DAC 가 `ALERT_MID`(무음 중앙값)로 파킹 → 험/팝 없이 조용한지 먼저 확인
+   - 위험 트리거 시 `driveAudio()` 가 PCM 한 발 + gap 을 반복
 
 ---
 
@@ -140,6 +141,7 @@ D6~(PWM) ──[ R1 10kΩ ]──┘
 | 버튼 눌러도 모드 안 바뀜 | OLED 내장 버튼(D9/D10/D11/D12) 결선 확인. 시리얼에 `[버튼]` 로그 안 뜨면 결선/디바운스(`DEBOUNCE_MS`) 점검. |
 | RCWL 계속 HIGH | 부팅 1분 안. 또는 주변 움직임 많음. 구리테이프 차폐 권장. |
 | PIR 반응 늦음 | HC-SR505 자체 ~2.5초 지연. 정상. |
-| 톤 한쪽만 들림 (저음만/고음만) | R_a 또는 R1 단선. 합산점에서 양쪽 신호 모두 측정. |
-| 톤 노이즈 심함 | C 1μF 가 너무 작거나 큼. 100nF~10μF 범위에서 조정. 또는 GND 공유 확인. |
-| 음량 너무 작음 | DAC 직결로는 한계. 단일 채널 D 클래스 앰프(PAM8403 등) 추가. |
+| 경고음 아예 안 남 | A0→R_a→C→스피커 결선 확인. 시리얼에 `[오디오] 타이머 확보 실패` 뜨면 FspTimer 미확보. |
+| 소리가 찢어짐/거침 | 정상(거칠음 변조 의도). 심하면 C 키워 고역 깎기(1μF→2.2μF). DAC 험은 ALERT_MID 파킹으로 억제됨. |
+| 음량 너무 작음 | DAC 직결로는 한계. R/C 뒤에 단일 채널 D급 앰프(PAM8403 등) 추가. |
+| 음색을 바꾸고 싶음 | `sound.py` 파라미터 조정 → 재렌더해 `alert_pcm.h` 교체 (mode=loud 등). |

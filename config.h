@@ -84,11 +84,11 @@
 struct Btn { uint8_t pin; bool prev; unsigned long lastMs; };
 // D8 : 예비 (외부 모드 스위치 제거 → 미사용)
 
-// 스피커 출력 (듀오벨: 저음 DAC + 고음 PWM → 하드웨어 저항 합산 → 모노 스피커) — J9
-//   A0(DAC) 사인파 저음 + D6~(PWM) 사각파 고음을 '동시' 출력해 한 스피커로 믹싱.
+// 스피커 출력 (alert_pcm.h PCM 을 A0 DAC 로 22050Hz 재생 → R/C → 모노 스피커) — J9
+//   sound.py 합성음이 PCM 한 채널에 이미 다 믹싱돼 있어 DAC 단독으로 재생.
 //   UNO R4 WiFi 의 진짜 DAC 는 A0 한 개뿐 — 다른 용도로 쓰지 말 것.
-#define PIN_SPK_DAC A0 // DAC 사인 출력 — 저음 (TONE_FREQ_PRIMARY)
-#define PIN_SPK_PWM 6  // PWM 사각 출력 — 고음 (TONE_FREQ_SECONDARY)
+#define PIN_SPK_DAC A0 // DAC PCM 출력 (12bit, ALERT_RATE)
+#define PIN_SPK_PWM 6  // (구 DuoBell 고음 채널) 미사용 — PCM 재생으로 대체, 예비
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  3. 동작 파라미터
@@ -109,19 +109,16 @@ struct Btn { uint8_t pin; bool prev; unsigned long lastMs; };
 #define WARN_MAX_DURATION_MS                                                   \
   15000UL // 위험 시작 후 최대 N ms → 계속 감지돼도 강제 해제 (센서 재풀림 전까진 재발 억제)
 
-// 톤 주파수 (듀오벨)
-#define TONE_FREQ_PRIMARY 780    // Hz — 저음, DAC 사인 (ANC 취약점 → 이어폰 뚫음)
-#define TONE_FREQ_SECONDARY 2000 // Hz — 고음, PWM 사각 (습관화 방지 → 귀 깨움)
+// 톤 주파수 — (구 DuoBell 2톤 합성용. PCM 재생으로 전환되며 미사용. 참고용 보존)
+//   스윕/벨 배음 등 음색은 이제 sound.py → alert_pcm.h 에서 결정된다.
+#define TONE_FREQ_PRIMARY 780    // (legacy) Hz — 저음
+#define TONE_FREQ_SECONDARY 2000 // (legacy) Hz — 고음
 
-// 경고음 펄싱 + 고음 스윕 (정적 드론 대신; 돌출/습관화 방지/in-ear ANC 회피)
-//   · 짧은 on/off 펄싱이 정적음보다 잘 알아차려지고, 음악의 순간 빈틈을 더 자주 통과.
-//   · 고음을 왕복 스윕하면 스펙트럼이 움직여 ANC 적응형 필터가 락온하기 어렵고
-//     습관화도 방지됨. 사각파 배음(6k/10kHz)이 in-ear ANC 침투대역을 함께 커버.
-#define WARN_PULSE_ON_MS   150   // 한 발 길이 (ms)
-#define WARN_PULSE_OFF_MS   90   // 펄스 사이 무음 (ms)
-#define WARN_HF_SWEEP        1   // 1=고음 TONE_FREQ_SECONDARY↔WARN_SWEEP_TOP_HZ 왕복, 0=고정
-#define WARN_SWEEP_TOP_HZ 3500   // 고음 스윕 상단 (Hz)
-#define WARN_SWEEP_MS      120   // 스윕 편도 시간 (ms)
+// 경고음 펄싱 (정적 드론 대신; 돌출/습관화 방지/in-ear ANC 회피)
+//   · 한 발 길이는 alert_pcm.h 의 ALERT_LEN/ALERT_RATE(=0.15s) 로 고정.
+//   · WARN_PULSE_OFF_MS = 한 발과 다음 발 사이 무음(gap). sound.py repeat(gap_sec) 대응.
+#define WARN_PULSE_OFF_MS   90   // 펄스 사이 무음 (ms) — 값↑이면 또박또박, ↓이면 다급
+#define WARN_PULSE_ON_MS   150   // (legacy) PCM 한 발 길이는 alert_pcm.h 가 결정 — 미사용
 
 // 디바운스
 #define DEBOUNCE_MS 20
