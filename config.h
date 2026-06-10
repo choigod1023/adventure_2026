@@ -43,10 +43,10 @@
 // C-ITS 교차로 ID (itstId, 문자열). t-data 사이트 또는 응답의 itstId 필드에서 확인.
 // ⚠️ 반드시 모니터링할 교차로 ID 를 지정할 것. "" 로 두면 임의 교차로가 잡힘.
 //    "22871" = 충무로역 1번출구 앞 횡단보도 / "1063" = 번동사거리(구)
-#define SPAT_ITST_ID "22871"
+#define SPAT_ITST_ID "1063"
 
 // OLED 에 표시할 교차로 이름 (API 응답엔 한글 이름이 없어서 직접 지정)
-#define SPAT_ITST_NAME "충무로1번출구"
+#define SPAT_ITST_NAME "번동사거리"
 
 // 감시할 보행 신호 방향 — 응답 필드명 + 표시 라벨
 //   북=nt 동=et 남=st 서=wt / 대각: ne se sw nw

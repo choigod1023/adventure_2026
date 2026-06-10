@@ -19,6 +19,51 @@ void fetchBus();
 void fetchSubway();
 void fetchSpat();
 
+// ─── Blocking Stream Wrapper to prevent premature timeout during network streaming ───
+class BlockingStream : public Stream {
+private:
+  Stream& _stream;
+  unsigned long _timeout;
+
+public:
+  BlockingStream(Stream& stream, unsigned long timeout = 5000)
+    : _stream(stream), _timeout(timeout) {}
+
+  int read() override {
+    unsigned long start = millis();
+    while (_stream.available() == 0) {
+      if (millis() - start >= _timeout) {
+        return -1; // Timeout
+      }
+      delay(1);
+    }
+    return _stream.read();
+  }
+
+  int peek() override {
+    unsigned long start = millis();
+    while (_stream.available() == 0) {
+      if (millis() - start >= _timeout) {
+        return -1; // Timeout
+      }
+      delay(1);
+    }
+    return _stream.peek();
+  }
+
+  int available() override {
+    return _stream.available();
+  }
+
+  size_t write(uint8_t c) override {
+    return _stream.write(c);
+  }
+
+  void flush() override {
+    _stream.flush();
+  }
+};
+
 // ════════════════════════════════════════════════════════════════
 //  WiFi
 // ════════════════════════════════════════════════════════════════
@@ -84,6 +129,7 @@ bool evaluateBus() {
 void fetchBus() {
   Serial.println(F("\n[BUS API]"));
 
+  plainSock.stop(); // Clear any stale connection on plainSock
   HttpClient http(plainSock, "ws.bus.go.kr", 80);
   http.setHttpResponseTimeout(8000);   // 30s 행 방지
   char path[220];   // String 대신 고정 버퍼 → 힙 단편화 방지
@@ -115,8 +161,9 @@ void fetchBus() {
   filter["msgBody"]["itemList"][0]["arrmsg1"] = true;
 
   JsonDocument doc;
+  BlockingStream blockingHttp(http);
   DeserializationError err =
-      deserializeJson(doc, http, DeserializationOption::Filter(filter));
+      deserializeJson(doc, blockingHttp, DeserializationOption::Filter(filter));
   http.stop();
   if (err) {
     Serial.print(F("[JSON] ")); Serial.println(err.c_str());
@@ -201,6 +248,7 @@ bool evaluateSubway() {
 void fetchSubway() {
   Serial.println(F("\n[SUBWAY API]"));
 
+  plainSock.stop(); // Clear any stale connection on plainSock
   HttpClient http(plainSock, "swopenAPI.seoul.go.kr", 80);
   http.setHttpResponseTimeout(8000);   // 30s 행 방지
   // 행수 20: 노선/방향 필터(1004 하행) 가 5행 안에 안 들어오는 경우 대비.
@@ -233,8 +281,9 @@ void fetchSubway() {
   filter["realtimeArrivalList"][0]["barvlDt"]  = true;
 
   JsonDocument doc;
+  BlockingStream blockingHttp(http);
   DeserializationError err =
-      deserializeJson(doc, http, DeserializationOption::Filter(filter));
+      deserializeJson(doc, blockingHttp, DeserializationOption::Filter(filter));
   http.stop();
   if (err) {
     Serial.print(F("[JSON] ")); Serial.println(err.c_str());
@@ -319,6 +368,7 @@ bool evaluateSpat() {
 void fetchSpat() {
   Serial.println(F("\n[SPAT API]"));
 
+  sslSock.stop(); // Clear any stale connection on sslSock (critical for sharing with Vercel push)
   HttpClient http(sslSock, "t-data.seoul.go.kr", 443);
   http.setHttpResponseTimeout(8000);   // t-data 가 느리거나 500 일 때 30s 행 방지
 
@@ -356,8 +406,9 @@ void fetchSpat() {
   filter[0][SPAT_CAR_FIELD] = true;
 
   JsonDocument doc;
+  BlockingStream blockingHttp(http);
   DeserializationError err =
-    deserializeJson(doc, http, DeserializationOption::Filter(filter));
+    deserializeJson(doc, blockingHttp, DeserializationOption::Filter(filter));
   http.stop();
 
   if (err) {
