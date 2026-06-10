@@ -2,11 +2,11 @@
  * adventure_2026.ino  -  메인 스케치
  * 스몸비 안전 경고 장치 (Arduino UNO R4 WiFi)
  *
- * 모드 구성 (실측 PCB 기준) — 전부 모멘터리 푸시 버튼:
- *   D9  (PIN_BTN_SUBWAY) : A → ①지하철 API 모드
- *   D10 (PIN_BTN_BUS)    : B → ②버스 API 모드
- *   D11 (PIN_BTN_SPAT)   : C → ③C-ITS API 모드
- *   D12 (PIN_BTN_MODE)   : D → API 카테고리 ↔ SENSOR 모드 토글
+ * 모드 구성 (실측 배선) — 전부 모멘터리 푸시 버튼:
+ *   D13 (PIN_BTN_SUBWAY) : A → ①지하철 API 모드  (※ D13=온보드 LED 핀)
+ *   D11 (PIN_BTN_BUS)    : B → ②버스 API 모드
+ *   D10 (PIN_BTN_SPAT)   : C → ③C-ITS API 모드
+ *   D9  (PIN_BTN_MODE)   : D → API 카테고리 ↔ SENSOR 모드 토글
  *   네 버튼 모두 OLED 모듈 내장. A/B/C 는 SENSOR 상태였어도 누르면 해당 API 모드로 복귀.
  *   현재 활성 모드의 위험 트리거만 경고 발생.
  *
@@ -46,8 +46,8 @@
 // ════════════════════════════════════════════════════════════════
 
 // ─── 모드 ───
-//   ApiMode: API 카테고리 안에서 선택된 모드 (D9~D11 버튼으로 직접 선택)
-//   SENSOR  모드는 별도 플래그 (D12 버튼 토글)
+//   ApiMode: API 카테고리 안에서 선택된 모드 (D13/D11/D10 버튼으로 직접 선택)
+//   SENSOR  모드는 별도 플래그 (D9 버튼 토글)
 enum ApiMode {
   API_BUS = 0,
   API_SUBWAY,
@@ -55,7 +55,7 @@ enum ApiMode {
   API_COUNT
 };
 ApiMode currentApiMode = API_BUS;   // 마지막으로 선택된 API 모드
-bool sensorMode = false;            // true = SENSOR 모드 (D12 토글)
+bool sensorMode = false;            // true = SENSOR 모드 (D9 토글)
 bool modeJustChanged = true;        // 새 모드 진입 시 즉시 fetch
 
 // ─── 네트워크 상태 ───
@@ -134,10 +134,10 @@ unsigned long lastDraw        = 0;
 const unsigned long DRAW_INTERVAL_MS = 250UL;
 
 // ─── 버튼 디바운스 (struct Btn 정의는 config.h — IDE 자동 prototype 회피용) ───
-Btn btnSubway = { PIN_BTN_SUBWAY, HIGH, 0 };  // D9  (A) : → SUBWAY
-Btn btnBus    = { PIN_BTN_BUS,    HIGH, 0 };  // D10 (B) : → BUS
-Btn btnSpat   = { PIN_BTN_SPAT,   HIGH, 0 };  // D11 (C) : → CITS
-Btn btnMode   = { PIN_BTN_MODE,   HIGH, 0 };  // D12 (D) : API ↔ SENSOR 토글
+Btn btnSubway = { PIN_BTN_SUBWAY, HIGH, 0 };  // D13 (A) : → SUBWAY
+Btn btnBus    = { PIN_BTN_BUS,    HIGH, 0 };  // D11 (B) : → BUS
+Btn btnSpat   = { PIN_BTN_SPAT,   HIGH, 0 };  // D10 (C) : → CITS
+Btn btnMode   = { PIN_BTN_MODE,   HIGH, 0 };  // D9  (D) : API ↔ SENSOR 토글
 
 // ─── OLED ─── (config.h: OLED_USE_SW_I2C 로 HW(A4/A5) ↔ SW(D8/D7) 전환)
 #if OLED_USE_SW_I2C
@@ -324,7 +324,7 @@ void setup() {
   connectWiFi();
   syncTimeNTP();   // 시간대 음량 스케줄용 현재시각(KST) 동기화
 
-  Serial.println(F("[부팅 완료] D12=API/SENSOR, D9~D11=BUS/SUBWAY/CITS"));
+  Serial.println(F("[부팅 완료] D9=API/SENSOR, D13/D11/D10=SUBWAY/BUS/CITS"));
 }
 
 void loop() {
@@ -364,8 +364,8 @@ void loop() {
 
 // ════════════════════════════════════════════════════════════════
 //  버튼 입력 → 모드 선택
-//   D12        : API 카테고리 ↔ SENSOR 토글 (OLED 내장 버튼 D)
-//   D9/D10/D11 : BUS/SUBWAY/CITS 직접 선택 (자동으로 API 카테고리 진입)
+//   D9         : API 카테고리 ↔ SENSOR 토글 (OLED 내장 버튼 D)
+//   D13/D11/D10: SUBWAY/BUS/CITS 직접 선택 (자동으로 API 카테고리 진입)
 // ════════════════════════════════════════════════════════════════
 
 // 버튼 눌림(HIGH→LOW falling edge) 검출 + 디바운스. 눌리면 true 1회.
@@ -398,7 +398,7 @@ void selectApi(ApiMode m) {
 }
 
 void pollButtons() {
-  // D12 (OLED 버튼 D): API ↔ SENSOR 토글
+  // D9 (OLED 버튼 D): API ↔ SENSOR 토글
   if (btnPressed(btnMode)) {
     sensorMode = !sensorMode;
     enterMode();
@@ -406,7 +406,7 @@ void pollButtons() {
     Serial.println(sensorMode ? F("SENSOR") : F("API"));
   }
 
-  // D9~D11: API 모드 직접 선택 (SENSOR 였어도 API로 복귀)
+  // D13/D11/D10: API 모드 직접 선택 (SENSOR 였어도 API로 복귀)
   if (btnPressed(btnBus))    selectApi(API_BUS);
   if (btnPressed(btnSubway)) selectApi(API_SUBWAY);
   if (btnPressed(btnSpat))   selectApi(API_SPAT);

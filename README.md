@@ -39,11 +39,11 @@ RCWL OUT ─┤ D2                  A5/D19 ├─ SCL (OLED, J7)
 고음2k OUT ┤ D6~ (스피커2, J9)        A1 │
           │ D7              A0/D14 ├─ 저음780 OUT (스피커1, DAC, J9)
           │ D8 (예비)             AREF │
-          │ D9~                     GND │
-          │ D10~                     13 │
-          │ D11~                     12 │
-   MODE ──┤ D12 (OLED 버튼 D)      11~│
-          │ D13 (LED_BUILTIN)       10~│
+   MODE ──┤ D9~ (버튼 D)            GND │
+   CITS ──┤ D10~ (버튼 C)            13 ├─ SUBWAY (버튼 A) ⚠️LED핀
+    BUS ──┤ D11~ (버튼 B)            12 │ (예비)
+          │ D12 (예비)              11~│
+          │ D13 (LED/SUBWAY)        10~│
           │                          9~│
           │  POWER                          │
           │  5V ── +5V (센서/OLED, J1)      │
@@ -56,7 +56,8 @@ RCWL OUT ─┤ D2                  A5/D19 ├─ SCL (OLED, J7)
 | D2 | RCWL-0516 OUT | J8 | INPUT | 마이크로파 차량 감지 |
 | D5~ | HC-SR505 OUT | J11 | INPUT | PIR 인체 감지 |
 | D6~ | 고음 스피커2 → R1 → C1 → GND | J9 | OUTPUT (PWM) | 2kHz 사각파 (tone, 스윕 옵션) |
-| D12 | 모드 버튼 (OLED 내장 버튼 D) | J7 | INPUT_PULLUP | 누르면 API ↔ SENSOR 토글 |
+| D9 | 모드 버튼 (OLED 버튼 D) | J7 | INPUT_PULLUP | 누르면 API ↔ SENSOR 토글 |
+| D10 / D11 / D13 | CITS / BUS / SUBWAY 버튼 (C/B/A) | J7 | INPUT_PULLUP | D13=⚠️온보드 LED 핀 |
 | D18 (A4) | OLED SDA | J7 | I2C | 소프트웨어 I2C (U8g2 `_SW_I2C`) |
 | D19 (A5) | OLED SCL | J7 | I2C | 소프트웨어 I2C (U8g2 `_SW_I2C`) |
 | A0 (D14) | 저음 스피커1 → R_a → C → GND | J9 | OUTPUT (DAC) | 780Hz 사인파 (analogWave) |

@@ -12,14 +12,15 @@
 | **D2** | RCWL-0516 OUT | J8 | INPUT | 마이크로파 차량 감지 |
 | **D5** | HC-SR505 OUT | J11 | INPUT | PIR 인체 감지 |
 | **D6 (PWM)** | 고음 스피커2 출력 | J9 | OUTPUT | 2kHz 사각파 → R/C → 스피커2 |
-| **D8** | (예비) | — | — | 외부 모드 스위치 제거 → 미사용 |
-| **D12** | API 버튼 → BUS | J7 | INPUT_PULLUP | OLED 모듈 내장 버튼 |
-| **D11** | API 버튼 → SUBWAY | J7 | INPUT_PULLUP | OLED 모듈 내장 버튼 |
-| **D10** | API 버튼 → CITS | J7 | INPUT_PULLUP | OLED 모듈 내장 버튼 |
-| **D9** | 모드 버튼 (토글) | J7 | INPUT_PULLUP | OLED 내장 버튼 D — **누르면 API ↔ SENSOR 전환** |
+| **D7** | OLED SDA (SW I2C) | J7 | I2C | config `OLED_USE_SW_I2C=1` |
+| **D8** | OLED SCL (SW I2C) | J7 | I2C | config `OLED_USE_SW_I2C=1` |
+| **D9** | 버튼 D → 모드 토글 | J7 | INPUT_PULLUP | API ↔ SENSOR 전환 |
+| **D10** | 버튼 C → CITS | J7 | INPUT_PULLUP | OLED 모듈 내장 |
+| **D11** | 버튼 B → BUS | J7 | INPUT_PULLUP | OLED 모듈 내장 |
+| **D12** | (예비) | — | — | 비어있음 |
+| **D13** | 버튼 A → SUBWAY | J7 | INPUT_PULLUP | ⚠️ 온보드 LED 핀 (읽기 불안정 가능) |
 | **A0 (DAC)** | 저음 스피커1 출력 | J9 | OUTPUT (DAC) | 780Hz 사인파 → R/C → 스피커1 |
-| **A4 (D18)** | OLED SDA | J7 | I2C | 소프트웨어 I2C (U8g2 `_SW_I2C`) |
-| **A5 (D19)** | OLED SCL | J7 | I2C | 소프트웨어 I2C (U8g2 `_SW_I2C`) |
+| **A4/A5** | (OLED HW I2C 시 SDA/SCL) | J7 | I2C | 현재 SW I2C 사용 중이라 미사용 |
 | **+5V** | VCC (센서·OLED) | J1 | POWER | |
 | **GND** | GND (전체 공통) | J1/J6 | POWER | |
 
@@ -86,17 +87,20 @@ OUT   ──→   D2       (config.h: PIN_RADAR)
 ```
 OLED 모듈 내장 버튼 (J7)   UNO R4
 ──────────────────────────────
-버튼 BUS    ──→ D9  (PIN_BTN_BUS)
-버튼 SUBWAY ──→ D10 (PIN_BTN_SUBWAY)
-버튼 CITS   ──→ D11 (PIN_BTN_SPAT)
-버튼 D      ──→ D12 (PIN_BTN_MODE)   ← API ↔ SENSOR 토글
+버튼 A (SUBWAY) ──→ D13 (PIN_BTN_SUBWAY)   ⚠️ 온보드 LED 핀
+버튼 B (BUS)    ──→ D11 (PIN_BTN_BUS)
+버튼 C (CITS)   ──→ D10 (PIN_BTN_SPAT)
+버튼 D (모드)   ──→ D9  (PIN_BTN_MODE)     ← API ↔ SENSOR 토글
 ```
 
+> ⚠️ **D13 은 온보드 LED(LED_BUILTIN) 핀**이라 버튼으로 쓰면 LED 회로 영향으로 `INPUT_PULLUP`
+> 읽기가 불안정할 수 있음. 안 눌리거나 오작동하면 외부 풀업 추가 또는 빈 핀(D12)로 옮길 것.
+
 **동작**:
-- **D12 (OLED 버튼 D)** 누름 → API 카테고리 ↔ SENSOR 모드 **토글**
-- **D9 / D10 / D11** 누름 → 각각 **BUS / SUBWAY / CITS** API 모드로 직접 점프
+- **D9 (OLED 버튼 D)** 누름 → API 카테고리 ↔ SENSOR 모드 **토글**
+- **D13 / D11 / D10** 누름 → 각각 **SUBWAY / BUS / CITS** API 모드로 직접 점프
   (SENSOR 모드 상태였어도 누르면 해당 API 모드로 복귀)
-- 외부 모드 스위치(J10, D8)는 제거됨 — OLED 내장 버튼 D(D12)로 대체. D8 은 예비.
+- D8 은 OLED SW I2C(SCL) 로 사용 중. D12 가 비어있는 예비 핀.
 
 ### 5. DuoBell 오디오 (2채널 분리 — 스피커 2개) — J9
 
@@ -133,7 +137,7 @@ D6~(PWM) ──[ R1 1kΩ ]──[ C 1μF ]── 스피커2 (+)   ; 스피커2 (
 
 1. **UNO R4 만 USB 연결** → 시리얼 모니터 부팅 로그 확인
 2. **OLED I2C 연결** (J7) → "부팅 중" 화면 표시되면 OK
-3. **OLED 내장 버튼** → 버튼 D(D12) 누르면 `[버튼] 토글 → API/SENSOR`, 버튼 BUS/SUBWAY/CITS(D9~D11) → `[버튼] API → BUS/SUBWAY/CITS` 출력
+3. **OLED 내장 버튼** → 버튼 D(D9) 누르면 `[버튼] 토글 → API/SENSOR`, 버튼 SUBWAY/BUS/CITS(D13/D11/D10) → `[버튼] API → ...` 출력
 4. **PIR** (D5, J11) → 시리얼에 `[PIR ↑]` 출력 확인 (1분 안정화 후)
 5. **RCWL** (D2, J8) → `[RADAR ↑] #N` 출력 확인 (config.h `HAS_RCWL=1` 로 활성화)
 6. **DuoBell** (A0→스피커1, D6→스피커2, J9) → 위험 상태에서 저음(780)·고음(2k) 두 스피커가 같은 펄싱으로 동시에 울리는지 확인
@@ -146,7 +150,7 @@ D6~(PWM) ──[ R1 1kΩ ]──[ C 1μF ]── 스피커2 (+)   ; 스피커2 (
 | 증상 | 원인/해결 |
 |---|---|
 | OLED 안 켜짐 | I2C 주소(0x3C/0x3D) 확인. SDA/SCL 바뀐 거 아닌지 확인. |
-| 버튼 눌러도 모드 안 바뀜 | OLED 내장 버튼(D9/D10/D11/D12) 결선 확인. 시리얼에 `[버튼]` 로그 안 뜨면 결선/디바운스(`DEBOUNCE_MS`) 점검. |
+| 버튼 눌러도 모드 안 바뀜 | OLED 내장 버튼(D13/D11/D10/D9) 결선 확인. 시리얼에 `[버튼]` 로그 안 뜨면 결선/디바운스(`DEBOUNCE_MS`) 점검. D13(SUBWAY)은 LED핀이라 특히 의심. |
 | RCWL 계속 HIGH | 부팅 1분 안. 또는 주변 움직임 많음. 구리테이프 차폐 권장. |
 | PIR 반응 늦음 | HC-SR505 자체 ~2.5초 지연. 정상. |
 | 톤 한쪽만 들림 (저음만/고음만) | 스피커1(A0)/스피커2(D6) 중 한쪽 결선·R/C 단선 확인. 각 핀 출력 따로 측정. |

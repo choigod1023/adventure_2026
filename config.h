@@ -18,11 +18,11 @@
 //   1) 정류장 표지판에 적힌 5자리 숫자 (예: 23-282)
 //   2) 또는 https://bus.go.kr 에서 정류장 검색
 //   3) 또는 getStationByName API 호출
-#define BUS_ARS_ID "09153"
+#define BUS_ARS_ID "02153"  // 충무로역2번출구 (명동역 방향)
 
 // 지하철 모니터링 역명 (한글 그대로, "역" 글자 제외)
 // 예: "서울", "강남", "잠실"
-#define SUBWAY_STATION "수유"
+#define SUBWAY_STATION "충무로"
 
 // 지하철 역명 UTF-8 URL 인코딩 (API URL 안전 전송용)
 // "수유"   = %EC%88%98%EC%9C%A0
@@ -30,24 +30,32 @@
 // "강남"   = %EA%B0%95%EB%82%A8
 // "잠실"   = %EC%9E%A0%EC%8B%A4
 // "교대"   = %EA%B5%90%EB%8C%80
+// "충무로" = %EC%B6%A9%EB%AC%B4%EB%A1%9C
 // SUBWAY_STATION 변경 시 반드시 같이 갱신할 것.
-#define SUBWAY_STATION_ENC "%EC%88%98%EC%9C%A0"
+#define SUBWAY_STATION_ENC "%EC%B6%A9%EB%AC%B4%EB%A1%9C"
+
+// 노선/방향 필터 (빈 문자열 "" 이면 필터 안 함)
+//   충무로 4호선 하행(사당행-명동방면): subwayId=1004, updnLine="하행"
+//   호선코드: 1호선=1001 2호선=1002 3호선=1003 4호선=1004 ...
+#define SUBWAY_FILTER_LINE "1004"   // subwayId (4호선)
+#define SUBWAY_FILTER_DIR  "하행"    // updnLine 부분일치 ("상행"/"하행")
 
 // C-ITS 교차로 ID (itstId, 문자열). t-data 사이트 또는 응답의 itstId 필드에서 확인.
 // ⚠️ 반드시 모니터링할 교차로 ID 를 지정할 것. "" 로 두면 임의 교차로가 잡힘.
-//    "1063" = 번동사거리
-#define SPAT_ITST_ID "1063"
+//    "22871" = 충무로역 1번출구 앞 횡단보도 / "1063" = 번동사거리(구)
+#define SPAT_ITST_ID "22871"
 
 // OLED 에 표시할 교차로 이름 (API 응답엔 한글 이름이 없어서 직접 지정)
-#define SPAT_ITST_NAME "번동사거리"
+#define SPAT_ITST_NAME "충무로1번출구"
 
 // 감시할 보행 신호 방향 — 응답 필드명 + 표시 라벨
 //   북=nt 동=et 남=st 서=wt / 대각: ne se sw nw
 //   접미사: PdsgRmdrCs = 보행 잔여, StsgRmdrCs = 직진(차량) 잔여
 //
-//   ⚠️ 번동사거리(1063) raw 응답 분석 결과 (2026-06-03):
-//      - 남(st): stStsgRmdrCs 항상 null → PED/CAR 비교 불가 → phase 판정 안 됨
-//      - 서(wt): wtPdsgRmdrCs / wtStsgRmdrCs 둘 다 값 있음 → 비교 가능 ✓
+//   ⚠️ 충무로(22871) 방향(보행/차량 필드)은 API 500 로 미검증 — 아래는 임시값(wt).
+//      API 복구 후 시리얼 [raw] 로그를 보며 nt/et/st/wt 중 보행+차량 둘 다 값 있는
+//      방향으로 SPAT_PED_FIELD/CAR_FIELD/LABEL 을 맞출 것. (null 이면 "신호 없음" 표시)
+//   (참고) 번동사거리(1063): 서(wt) 가 둘 다 값 있어 비교 가능했음.
 //
 //   페이즈 판정 (apis.ino fetchSpat):
 //     활성 페이즈의 RmdrCs 가 더 짧음 (활성 = 곧 종료될 phase) →
@@ -78,9 +86,12 @@
 #define PIN_RADAR 2 // RCWL-0516 차량 감지 — J8
 #define PIN_PIR 5   // HC-SR505 보행자 감지 — J11
 
-// 입력 버튼 (전부 모멘터리 푸시, INPUT_PULLUP / 눌림 = LOW)
-//   D9~D12 : OLED 모듈 내장 4 버튼 (A=D9, B=D10, C=D11, D=D12) — J7
+// 입력 버튼 (전부 모멘터리 푸시, INPUT_PULLUP / 눌림 = LOW) — J7
+//   현재 실측 배선: A=D13, B=D11, C=D10, D=D9
 //     A=SUBWAY, B=BUS, C=CITS, D=API↔SENSOR 토글
+//   ⚠️ D13 은 온보드 LED(LED_BUILTIN) 핀 — 버튼으로 쓰면 LED 회로 영향으로 INPUT_PULLUP
+//      읽기가 불안정할 수 있음. 증상 있으면 외부 풀업/다른 핀(D12 비었음) 고려.
+//   D8 = OLED SW I2C(SCL) 로 사용 중, D12 = 비어있음(예비).
 #define PIN_BTN_SUBWAY 13  // A → SUBWAY
 #define PIN_BTN_BUS 11    // B → BUS
 #define PIN_BTN_SPAT 10   // C → CITS
@@ -89,7 +100,7 @@
 // 버튼 디바운스용 — Arduino IDE 가 자동으로 함수 prototype 을 파일 최상단에 끼워
 // 넣기 때문에, Btn 을 인자로 받는 함수보다 *먼저* 보이도록 헤더에 정의해 둔다.
 struct Btn { uint8_t pin; bool prev; unsigned long lastMs; };
-// D8 : 예비 (외부 모드 스위치 제거 → 미사용)
+// D12 : 비어있음(예비) / D8 : OLED SW I2C(SCL) 로 사용
 
 // 스피커 출력 (듀오벨: 저음 DAC + 고음 PWM → 하드웨어 저항 합산 → 모노 스피커) — J9
 //   A0(DAC) 사인파 저음 + D6~(PWM) 사각파 고음을 '동시' 출력해 한 스피커로 믹싱.

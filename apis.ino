@@ -237,7 +237,12 @@ void fetchSubway() {
   for (JsonObject item : arr) {
     const char* m   = item["arvlMsg2"] | "";
     const char* sid = item["subwayId"] | "?";
+    const char* upd = item["updnLine"] | "";
     int sec         = item["barvlDt"]  | 9999;
+
+    // 노선/방향 필터 (config.h SUBWAY_FILTER_LINE/DIR, 빈 문자열이면 통과)
+    if (SUBWAY_FILTER_LINE[0] && strcmp(sid, SUBWAY_FILTER_LINE) != 0) continue;
+    if (SUBWAY_FILTER_DIR[0]  && !strstr(upd, SUBWAY_FILTER_DIR))      continue;
 
     // 위험: 다음 역(=이 역)까지 30초 미만, "곧 도착", "당역 도착/진입".
     // ⚠️ "전역(前驛)" = 앞 역 (1~3분 거리) → 위험 아님. 절대 매칭하지 말 것.
