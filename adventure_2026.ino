@@ -122,6 +122,7 @@ SensorState sensors = { false, false, 0, 0 };
 
 // ─── 위험 상태머신 ───
 bool dangerActive = false;
+bool dangerSuppressed = false;           // 강제 해제 후 새 위험 감지 시까지 재트리거 방지 래치
 unsigned long dangerLastDetectedAt = 0;  // 마지막 감지 시각 (조용해지면 해제용)
 unsigned long dangerStartedAt = 0;       // 위험 ON 된 시각 (최대 지속시간 캡용)
 
@@ -452,7 +453,7 @@ const char* currentModeLabel() {
 //  위험 상태머신
 //   - 해제①: 마지막 감지 후 WARN_DURATION_MS 동안 조용 (히스테리시스)
 //   - 해제②: 위험 시작 후 WARN_MAX_DURATION_MS 경과 → 계속 감지돼도 강제 해제
-//            (억제 래치 없음 → 아직 감지중이면 다음 루프에 곧바로 재트리거)
+//            (강제 해제 시 래치 작동 → 위험 상태가 완전히 꺼지기 전에는 재트리거 방지)
 // ════════════════════════════════════════════════════════════════
 void updateDangerState(bool detected) {
   if (dangerActive) {
@@ -463,13 +464,24 @@ void updateDangerState(bool detected) {
 
     if (quietEnough || maxedOut) {
       dangerActive = false;
-      Serial.println(F("[WARN] 위험 해제"));
+      if (maxedOut) {
+        dangerSuppressed = true; // 강제 해제 시 래치 활성화
+        Serial.println(F("[WARN] 위험 강제 해제 (최대 시간 초과)"));
+      } else {
+        Serial.println(F("[WARN] 위험 해제 (감지 종료)"));
+      }
     }
-  } else if (detected) {
-    dangerActive = true;
-    dangerStartedAt = millis();
-    dangerLastDetectedAt = millis();
-    Serial.println(F("[WARN] 위험 트리거 ON"));
+  } else {
+    if (!detected) {
+      dangerSuppressed = false; // 위험 요소가 완전히 사라지면 래치 해제
+    }
+
+    if (detected && !dangerSuppressed) {
+      dangerActive = true;
+      dangerStartedAt = millis();
+      dangerLastDetectedAt = millis();
+      Serial.println(F("[WARN] 위험 트리거 ON"));
+    }
   }
 }
 
