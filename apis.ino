@@ -335,11 +335,7 @@ void fetchSubway() {
     }
   }
 
-  char detail[48];
-  snprintf(detail, sizeof(detail), "%s %s",
-           pickedLine ? pickedLine : "?",
-           pickedMsg  ? pickedMsg  : "정보 없음");
-  setDisplayValid(SUBWAY_STATION "역", detail, urgent);
+  setDisplayValid(SUBWAY_STATION "역", pickedMsg ? pickedMsg : "정보 없음", urgent);
 }
 
 // ════════════════════════════════════════════════════════════════
