@@ -285,6 +285,11 @@ void fetchSubway() {
   DeserializationError err =
       deserializeJson(doc, blockingHttp, DeserializationOption::Filter(filter));
   http.stop();
+
+  Serial.print(F("[DEBUG SUBWAY JSON] "));
+  serializeJson(doc, Serial);
+  Serial.println();
+
   if (err) {
     Serial.print(F("[JSON] ")); Serial.println(err.c_str());
     setDisplayError("SUBWAY", "JSON 오류");
