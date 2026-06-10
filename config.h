@@ -151,6 +151,10 @@ struct Btn { uint8_t pin; bool prev; unsigned long lastMs; };
 #define VOL_DAY            0.85f           // 낮 음량 (크게, 헤드룸 남김)
 #define VOL_NIGHT          0.30f           // 밤 음량 (민원 회피)
 #define VOL_MAX            0.90f           // 소프트 상한 (클리핑/안전 헤드룸)
+#define VOL_PRESET_SUBWAY  0.50f           // 지하철 (실내, 울림 소음 고려해 작게)
+#define VOL_PRESET_BUS     0.75f           // 버스 정류장 (반실외 소음)
+#define VOL_PRESET_SPAT    1.00f           // 횡단보도 (차도 인접, 최대 볼륨)
+#define VOL_PRESET_SENSOR  0.80f           // 골목/센서 (기본 소음 대비 중간 볼륨)
 #define NTP_TZ_OFFSET_SEC  (9 * 3600)      // KST = UTC+9
 
 // ── 웹 디스플레이 push (Vercel Next.js /api/status) ─────────────────

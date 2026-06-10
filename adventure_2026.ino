@@ -233,11 +233,26 @@ int minuteOfDay() {
   return (int)((e % 86400UL) / 60UL);
 }
 
-// 현재 음량(0~1). 미동기화 시 낮(크게)로 안전 폴백.
+// 현재 음량(0~1). 시간대(낮/밤) 베이스 볼륨에 상황별 소음 프리셋 가중치를 곱해 결정.
 float currentVolume() {
+  // 1) 시간대별 베이스 볼륨 (낮/밤)
   int m = minuteOfDay();
   bool day = (m < 0) ? true : (m >= VOL_DAY_START_MIN && m < VOL_DAY_END_MIN);
-  float v = day ? VOL_DAY : VOL_NIGHT;
+  float baseVol = day ? VOL_DAY : VOL_NIGHT;
+
+  // 2) 상황별 소음 편차 프리셋 적용 (방안 A)
+  float preset = 1.0f;
+  if (sensorMode) {
+    preset = VOL_PRESET_SENSOR;
+  } else {
+    switch (currentApiMode) {
+      case API_BUS:    preset = VOL_PRESET_BUS;    break;
+      case API_SUBWAY: preset = VOL_PRESET_SUBWAY; break;
+      case API_SPAT:   preset = VOL_PRESET_SPAT;   break;
+    }
+  }
+
+  float v = baseVol * preset;
   return v > VOL_MAX ? VOL_MAX : v;
 }
 
