@@ -42,3 +42,6 @@ ehthumbs.db
 # ===== 로컬 노트/메모 (선택) =====
 NOTES_LOCAL_*.md
 TODO_LOCAL.md
+
+# ===== 웹앱은 별도 레포 (github.com/choigod1023/adventure_2026_web) =====
+/web/

@@ -10,11 +10,10 @@
  *   네 버튼 모두 OLED 모듈 내장. A/B/C 는 SENSOR 상태였어도 누르면 해당 API 모드로 복귀.
  *   현재 활성 모드의 위험 트리거만 경고 발생.
  *
- * 오디오 (alert_pcm.h — sound.py 와 '동일한' 합성 경고음을 PCM 그대로 재생):
- *   A0 (DAC) = 12bit PCM, 22050Hz. FspTimer ISR 이 샘플을 한 발(0.15s)씩 흘려보냄.
- *     PCM 안에 cutthrough 스윕 + 벨 배음 + 온셋 클릭 + 750Hz 보험이 이미 믹싱돼 있어
- *     단일 DAC 채널만으로 sound.py 결과물이 그대로 재생된다.
- *   D6 (PWM) = 미사용(예비). 옛 DuoBell 2톤 합산 방식은 PCM 재생으로 대체됨.
+ * 오디오 (DuoBell — 한 스피커에 두 톤 동시 출력):
+ *   A0 (DAC) = 780Hz 사인파 (저음, ANC 취약점)
+ *   D6 (PWM) = 2kHz   사각파 (고음, 습관화 방지)
+ *   하드웨어 저항 합산으로 모노 스피커 1개에 믹싱.
  *
  * 파일 분할 (Arduino IDE 자동 병합):
  *   adventure_2026.ino  ← 본 파일: 전역 상태, setup/loop, 모드 매니저, 오디오
@@ -27,7 +26,7 @@
  *   - ArduinoHttpClient   (라이브러리 매니저)
  *   - ArduinoJson v7      (Benoit Blanchon)
  *   - U8g2lib             (oliver)
- *   - FspTimer            (UNO R4 보드패키지 기본 포함)
+ *   - analogWave          (UNO R4 보드패키지 기본 포함)
  */
 
 #include <WiFiS3.h>
@@ -35,11 +34,12 @@
 #include <ArduinoJson.h>
 #include <U8g2lib.h>
 #include <Wire.h>
-#include "FspTimer.h"     // UNO R4 하드웨어 타이머 → 22050Hz 샘플 ISR
+#include <WiFiUdp.h>
+#include "analogWave.h"
+#include "FspTimer.h"   // 고음(D6) 소프트 음량용 듀티-PWM 타이머
 
 #include "secrets.h"
 #include "config.h"
-#include "alert_pcm.h"    // sound.py 에서 렌더한 경고음 PCM (12bit DAC, 22050Hz, 0.15s 1발)
 
 // ════════════════════════════════════════════════════════════════
 //  전역 상태
@@ -139,8 +139,14 @@ Btn btnBus    = { PIN_BTN_BUS,    HIGH, 0 };  // D10 (B) : → BUS
 Btn btnSpat   = { PIN_BTN_SPAT,   HIGH, 0 };  // D11 (C) : → CITS
 Btn btnMode   = { PIN_BTN_MODE,   HIGH, 0 };  // D12 (D) : API ↔ SENSOR 토글
 
-// ─── OLED ─── (소프트웨어 I2C: SCL/SDA 비트뱅잉, 핀은 보드 기본 A5/A4)
-U8G2_SSD1306_128X64_NONAME_F_SW_I2C u8g2(U8G2_R0, /* clock=*/ SCL, /* data=*/ SDA, /* reset=*/ U8X8_PIN_NONE);
+// ─── OLED ─── (config.h: OLED_USE_SW_I2C 로 HW(A4/A5) ↔ SW(D8/D7) 전환)
+#if OLED_USE_SW_I2C
+//  소프트웨어 I2C 폴백 — A4/A5 손상 시. OLED SCL→D8, SDA→D7 로 옮겨 꽂을 것.
+U8G2_SSD1306_128X64_NONAME_F_SW_I2C u8g2(U8G2_R0, /* clock=SCL*/ OLED_SW_SCL_PIN, /* data=SDA*/ OLED_SW_SDA_PIN, /* reset=*/ U8X8_PIN_NONE);
+#else
+//  하드웨어 I2C (기본) — A4=SDA, A5=SCL. 소프트 비트뱅잉 타이밍 문제 회피.
+U8G2_SSD1306_128X64_NONAME_F_HW_I2C u8g2(U8G2_R0, /* reset=*/ U8X8_PIN_NONE);
+#endif
 const int OLED_WIDTH = 128;
 const int OLED_MAX_TEXT_WIDTH = 124;
 
@@ -148,45 +154,118 @@ const int OLED_MAX_TEXT_WIDTH = 124;
 WiFiClient    plainSock;
 WiFiSSLClient sslSock;
 
-// ─── 오디오 (PCM 경고음 재생) ───
-//   FspTimer 가 ALERT_RATE(22050Hz) 로 ISR 을 돌리며 A0 DAC 에 한 샘플씩 출력.
-//   s_pcmActive=true 인 동안만 ALERT_PCM 을 흘려보내고, 끝까지 가면 스스로 false 로.
-//   driveAudio() 가 위험 중에 gap 을 두고 다시 arm → sound.py 의 repeat() 펄싱 재현.
-FspTimer        audioTimer;
-volatile uint32_t s_pcmIdx    = 0;      // 현재 재생 중인 샘플 인덱스
-volatile bool     s_pcmActive = false;  // true = 한 발 재생 중
-bool          prevPcmActive   = false;  // 펄스 종료 에지 검출용
-unsigned long lastPulseEndMs  = 0;      // 마지막 펄스가 끝난 시각 (gap 계산)
+// ─── 오디오 (DuoBell) ───
+analogWave wave(DAC);   // A0 = DAC, 저음 사인 (음량 = wave.amplitude)
+bool warnAudioOn = false;
 
-// DAC 에 한 샘플 즉시 출력 (12bit, 0..4095). analogWriteResolution(12) 가 전제.
-static inline void dacWrite(uint16_t v) { analogWrite(DAC, v); }
+// ─── 고음(D6) 소프트 음량 PWM 엔진 ───
+//   tone() 은 고정 진폭 → 음량 조절 불가. 그래서 2kHz 사각파를 FspTimer 듀티-PWM 으로 직접 생성.
+//   ISR 을 TONE_FREQ_SECONDARY*HI_RES (=40kHz) 로 돌리며 듀티(=음량)만큼만 HIGH.
+//   PAM8302 입력 캡 + 스피커가 평균 → 듀티 깊이가 곧 2kHz 톤의 음량.
+#define HI_RES 20                       // 듀티 해상도 (2kHz x 20 = 40kHz ISR)
+FspTimer hiTimer;
+volatile bool     hiOn   = false;       // 고음 출력 중?
+volatile uint16_t hiDuty = 0;           // HIGH 유지 틱수 (0..HI_RES/2 = 0~50% duty)
+volatile uint16_t hiCtr  = 0;
 
-// 22050Hz 마다 호출되는 ISR — 다음 PCM 샘플을 DAC 로.
-void audioISR(timer_callback_args_t * /*arg*/) {
-  if (!s_pcmActive) return;                       // 무음 구간엔 아무것도 안 함
-  dacWrite(pgm_read_word(&ALERT_PCM[s_pcmIdx]));
-  if (++s_pcmIdx >= (uint32_t)ALERT_LEN) {        // 한 발(0.15s) 끝
-    s_pcmIdx = 0;
-    s_pcmActive = false;                          // driveAudio 가 gap 후 재arm
-  }
+void hiISR(timer_callback_args_t *) {
+  if (!hiOn) return;                    // 무음 구간(warnOff 가 핀 LOW 로 둠)
+  if (++hiCtr >= HI_RES) hiCtr = 0;
+  digitalWrite(PIN_SPK_PWM, (hiCtr < hiDuty) ? HIGH : LOW);
 }
 
-// FspTimer 를 ALERT_RATE 로 시작 (항상 돌고, s_pcmActive 로 게이팅).
-bool audioTimerBegin() {
+bool hiPwmBegin() {
   uint8_t type;
   int8_t ch = FspTimer::get_available_timer(type);
-  if (ch < 0) {                                   // 남는 타이머 없으면 PWM 예약분에서
-    FspTimer::force_use_of_pwm_reserved_timer();
-    ch = FspTimer::get_available_timer(type, true);
-  }
+  if (ch < 0) { FspTimer::force_use_of_pwm_reserved_timer(); ch = FspTimer::get_available_timer(type, true); }
   if (ch < 0) return false;
-  if (!audioTimer.begin(TIMER_MODE_PERIODIC, type, ch,
-                        (float)ALERT_RATE, 0.0f, audioISR)) return false;
-  if (!audioTimer.setup_overflow_irq()) return false;
-  if (!audioTimer.open())  return false;
-  if (!audioTimer.start()) return false;
+  float rate = (float)TONE_FREQ_SECONDARY * HI_RES;
+  if (!hiTimer.begin(TIMER_MODE_PERIODIC, type, ch, rate, 0.0f, hiISR)) return false;
+  if (!hiTimer.setup_overflow_irq()) return false;
+  if (!hiTimer.open())  return false;
+  if (!hiTimer.start()) return false;
   return true;
 }
+
+void hiSet(float vol) { hiDuty = (uint16_t)(vol * (HI_RES / 2) + 0.5f); hiOn = true; } // 음량 0~1 → 듀티 0~50%
+void hiStop() { hiOn = false; digitalWrite(PIN_SPK_PWM, LOW); }
+
+// ─── 시간대 음량 (NTP 한 번 받고 millis 로 보간, KST) ───
+bool          timeSynced = false;
+unsigned long epochAtSync = 0;          // 동기화 시점 KST epoch(초)
+unsigned long msAtSync    = 0;
+
+void syncTimeNTP() {
+  if (netState != NET_OK) return;
+  WiFiUDP udp;
+  udp.begin(2390);
+  byte pkt[48] = {0};
+  pkt[0] = 0b11100011;                  // LI=3, VN=4, Mode=3 (client)
+  udp.beginPacket("pool.ntp.org", 123);
+  udp.write(pkt, sizeof(pkt));
+  udp.endPacket();
+  unsigned long t0 = millis();
+  while (!udp.parsePacket()) {
+    if (millis() - t0 > 2000) { udp.stop(); Serial.println(F("[NTP] 실패")); return; }
+  }
+  udp.read(pkt, sizeof(pkt));
+  udp.stop();
+  unsigned long secs1900 = ((unsigned long)pkt[40] << 24) | ((unsigned long)pkt[41] << 16) |
+                           ((unsigned long)pkt[42] << 8)  |  (unsigned long)pkt[43];
+  epochAtSync = secs1900 - 2208988800UL + NTP_TZ_OFFSET_SEC;   // → KST epoch
+  msAtSync    = millis();
+  timeSynced  = true;
+  unsigned long sod = epochAtSync % 86400UL;
+  Serial.print(F("[NTP] KST ")); Serial.print(sod / 3600); Serial.print(':');
+  Serial.println((sod % 3600) / 60);
+}
+
+int minuteOfDay() {
+  if (!timeSynced) return -1;
+  unsigned long e = epochAtSync + (millis() - msAtSync) / 1000UL;
+  return (int)((e % 86400UL) / 60UL);
+}
+
+// 현재 음량(0~1). 미동기화 시 낮(크게)로 안전 폴백.
+float currentVolume() {
+  int m = minuteOfDay();
+  bool day = (m < 0) ? true : (m >= VOL_DAY_START_MIN && m < VOL_DAY_END_MIN);
+  float v = day ? VOL_DAY : VOL_NIGHT;
+  return v > VOL_MAX ? VOL_MAX : v;
+}
+
+// ─── 웹 디스플레이 push (Vercel /api/status) ───
+//   현재 displayData + 모드 + 위험여부를 JSON 으로 POST. (config.h ENABLE_WEB_PUSH)
+#if ENABLE_WEB_PUSH
+unsigned long lastWebPush = 0;
+bool          lastPushDanger = false;
+void pushStatus() {
+  if (netState != NET_OK || !displayData.valid) return;
+  bool changed = (dangerActive != lastPushDanger);
+  if (!changed && (millis() - lastWebPush < WEB_PUSH_MIN_INTERVAL_MS)) return;
+  lastWebPush = millis();
+  lastPushDanger = dangerActive;
+
+  char body[160];
+  snprintf(body, sizeof(body),
+    "{\"mode\":\"%s\",\"line1\":\"%s\",\"line2\":\"%s\",\"danger\":%s,\"ts\":%lu}",
+    currentModeLabel(), displayData.line1, displayData.line2,
+    dangerActive ? "true" : "false", millis());
+
+  HttpClient http(sslSock, WEB_PUSH_HOST, 443);
+  http.beginRequest();
+  http.post(WEB_PUSH_PATH);
+  http.sendHeader(F("Content-Type"), F("application/json"));
+  http.sendHeader(F("Content-Length"), (int)strlen(body));
+  http.sendHeader(F("Connection"), F("close"));
+  http.beginBody();
+  http.print(body);
+  http.endRequest();
+  int code = http.responseStatusCode();
+  http.stop();
+  if (code != 200) { Serial.print(F("[WEB push] HTTP ")); Serial.println(code); }
+}
+#endif
 
 // ════════════════════════════════════════════════════════════════
 //  setup / loop
@@ -206,14 +285,32 @@ void setup() {
   pinMode(PIN_BTN_BUS,    INPUT_PULLUP);
   pinMode(PIN_BTN_SUBWAY, INPUT_PULLUP);
   pinMode(PIN_BTN_SPAT,   INPUT_PULLUP);
+  pinMode(PIN_SPK_PWM,   OUTPUT);
 
-  // 오디오: DAC 12bit 모드 + 무음(중앙값)으로 파킹 후 22050Hz 타이머 가동
-  analogWriteResolution(12);          // analogWrite(DAC,v) 의 v 를 0..4095 로 직접 매핑
-  dacWrite(ALERT_MID);                // DAC 초기화 + DC 중앙값(무음)으로 시작
-  if (!audioTimerBegin()) Serial.println(F("[오디오] 타이머 확보 실패 — 무음"));
+  // 오디오: 780Hz 사인(DAC) + 2kHz 고음(D6 듀티-PWM, 소프트 음량) — 무음 상태로 준비
+  wave.sine(TONE_FREQ_PRIMARY);
+  wave.amplitude(0.0);
+  digitalWrite(PIN_SPK_PWM, LOW);
+  if (!hiPwmBegin()) Serial.println(F("[오디오] 고음 PWM 타이머 확보 실패"));
 
   // OLED
+#if OLED_USE_SW_I2C
+  Serial.println(F("[OLED] 소프트웨어 I2C (SCL=D8, SDA=D7)"));
+#else
+  // 하드웨어 I2C: A4/A5 가 살아있는지 부팅 스캔으로 즉시 진단
   Wire.begin();
+  Serial.print(F("[I2C 스캔] "));
+  byte found = 0;
+  for (byte a = 1; a < 127; a++) {
+    Wire.beginTransmission(a);
+    if (Wire.endTransmission() == 0) {
+      Serial.print(F("0x")); Serial.print(a, HEX); Serial.print(' ');
+      found++;
+    }
+  }
+  if (found) Serial.println(F("발견 (0x3C 보이면 OLED 정상 연결)"));
+  else       Serial.println(F("→ 아무것도 없음! A4/A5 핀/결선 사망 의심 → config.h OLED_USE_SW_I2C 1 + OLED 를 D8/D7 로"));
+#endif
   u8g2.begin();
   drawScreen();
 
@@ -225,6 +322,7 @@ void setup() {
 
   // WiFi (API 모드일 때 필요 — 센서 모드여도 미리 연결)
   connectWiFi();
+  syncTimeNTP();   // 시간대 음량 스케줄용 현재시각(KST) 동기화
 
   Serial.println(F("[부팅 완료] D12=API/SENSOR, D9~D11=BUS/SUBWAY/CITS"));
 }
@@ -259,6 +357,9 @@ void loop() {
     lastDraw = millis();
     drawScreen();    // ui.ino
   }
+#if ENABLE_WEB_PUSH
+  pushStatus();      // 큰 화면 웹앱으로 상태 전송 (위험 변화 시 즉시, 그 외 주기적)
+#endif
 }
 
 // ════════════════════════════════════════════════════════════════
@@ -350,30 +451,31 @@ void updateDangerState(bool detected) {
 }
 
 // ════════════════════════════════════════════════════════════════
-//  오디오 (alert_pcm.h — sound.py 합성음을 PCM 그대로 펄싱 재생)
-//    · 한 발 = ALERT_PCM 전체(0.15s). PCM 안에 스윕/벨/온셋/보험이 이미 믹싱됨.
-//    · 위험 동안 한 발 재생 → WARN_PULSE_OFF_MS 무음(gap) → 다시 재생.
-//      = sound.py 의 repeat(gap_sec) 펄싱을 펌웨어에서 재현 (정적 드론보다 돌출↑).
-//    · 실제 샘플 출력은 audioISR(22050Hz) 이 담당. 여기선 arm/gap 만 관리(논블로킹).
+//  오디오 (DuoBell 2채널 — 780Hz DAC 사인 + 2kHz D6 듀티-PWM, 빠른 펄싱)
+//    · 정적 드론 대신 짧은 on/off 펄싱 → 돌출↑ / 습관화 방지
+//    · 두 채널 모두 currentVolume() 으로 시간대(낮/밤) 음량 적용
+//      저음 = wave.amplitude(vol), 고음 = hiSet(vol)(듀티 깊이=음량, PAM8302 구동)
+//    · 절대 음량은 PAM8302 트리머(노즐)로 최종 조정 — 소프트 음량과 곱해짐
 // ════════════════════════════════════════════════════════════════
+void warnOn() {
+  float vol = currentVolume();                  // 시간대(낮/밤) 음량 0~1
+  wave.amplitude(vol);                          // 저음 780Hz 사인(DAC) — 음량 적용
+  hiSet(vol);                                   // 고음 2kHz(D6 듀티-PWM) — 음량 적용
+  warnAudioOn = true;
+}
+
+void warnOff() {
+  if (!warnAudioOn) return;
+  wave.amplitude(0.0);                          // 저음 OFF
+  hiStop();                                     // 고음 OFF (핀 LOW)
+  warnAudioOn = false;
+}
+
 void driveAudio() {
-  // 펄스 종료 에지(ISR 이 s_pcmActive 를 내림) 검출 → gap 시작 + DAC 무음 파킹
-  if (prevPcmActive && !s_pcmActive) {
-    lastPulseEndMs = millis();
-    dacWrite(ALERT_MID);                 // 중앙값으로 파킹(DC 험/팝 방지)
-  }
-  prevPcmActive = s_pcmActive;
-
-  if (!dangerActive) {                    // 위험 아니면 즉시 정지
-    if (s_pcmActive) { s_pcmActive = false; dacWrite(ALERT_MID); }
-    return;
-  }
-
-  if (s_pcmActive) return;                                 // 한 발 재생 중
-  if (millis() - lastPulseEndMs < (unsigned long)WARN_PULSE_OFF_MS) return;  // gap 대기
-
-  // 다음 한 발 arm (ISR 이 0 번 샘플부터 흘려보냄)
-  s_pcmIdx = 0;
-  s_pcmActive = true;
+  if (!dangerActive) { warnOff(); return; }
+  // 위험 동안: 짧은 on/off 펄싱 (정적 드론 대신)
+  unsigned long period = (unsigned long)WARN_PULSE_ON_MS + WARN_PULSE_OFF_MS;
+  if ((millis() % period) < (unsigned long)WARN_PULSE_ON_MS) warnOn();
+  else                                                       warnOff();
 }
 

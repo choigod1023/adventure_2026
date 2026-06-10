@@ -64,8 +64,15 @@
 
 // OLED (I2C) — J7 커넥터 (display)
 //   UNO R4 WiFi 기본값: D18=SDA(=A4), D19=SCL(=A5)
-//   U8g2 소프트웨어 I2C(_SW_I2C) 사용 — SCL/SDA 매크로(=A5/A4)를 비트뱅잉.
-//   물리 핀은 하드웨어 I2C와 동일, 별도 핀 정의 불필요.
+//
+//   OLED_USE_SW_I2C  0 = 하드웨어 I2C (A4=SDA, A5=SCL, Wire 페리페럴) ← 기본/추천
+//                        부팅 시 I2C 스캔으로 OLED(0x3C) 감지 여부를 시리얼에 찍는다.
+//                        스캔이 아무것도 못 찾으면 → A4/A5 핀/결선 사망 → 아래 1 로.
+//                    1 = 소프트웨어 I2C (임의 핀 비트뱅잉) — A4/A5 손상 시 폴백.
+//                        OLED 의 SCL/SDA 선을 아래 핀(D8/D7)으로 옮겨 꽂을 것.
+#define OLED_USE_SW_I2C 1
+#define OLED_SW_SCL_PIN 8   // 소프트 I2C 일 때 SCL — OLED SCL → D8
+#define OLED_SW_SDA_PIN 7   // 소프트 I2C 일 때 SDA — OLED SDA → D7
 
 // 센서 입력
 #define PIN_RADAR 2 // RCWL-0516 차량 감지 — J8
@@ -74,21 +81,21 @@
 // 입력 버튼 (전부 모멘터리 푸시, INPUT_PULLUP / 눌림 = LOW)
 //   D9~D12 : OLED 모듈 내장 4 버튼 (A=D9, B=D10, C=D11, D=D12) — J7
 //     A=SUBWAY, B=BUS, C=CITS, D=API↔SENSOR 토글
-#define PIN_BTN_SUBWAY 9  // A → SUBWAY
-#define PIN_BTN_BUS 10    // B → BUS
-#define PIN_BTN_SPAT 11   // C → CITS
-#define PIN_BTN_MODE 12   // D → API ↔ SENSOR 토글
+#define PIN_BTN_SUBWAY 13  // A → SUBWAY
+#define PIN_BTN_BUS 11    // B → BUS
+#define PIN_BTN_SPAT 10   // C → CITS
+#define PIN_BTN_MODE 9   // D → API ↔ SENSOR 토글
 
 // 버튼 디바운스용 — Arduino IDE 가 자동으로 함수 prototype 을 파일 최상단에 끼워
 // 넣기 때문에, Btn 을 인자로 받는 함수보다 *먼저* 보이도록 헤더에 정의해 둔다.
 struct Btn { uint8_t pin; bool prev; unsigned long lastMs; };
 // D8 : 예비 (외부 모드 스위치 제거 → 미사용)
 
-// 스피커 출력 (alert_pcm.h PCM 을 A0 DAC 로 22050Hz 재생 → R/C → 모노 스피커) — J9
-//   sound.py 합성음이 PCM 한 채널에 이미 다 믹싱돼 있어 DAC 단독으로 재생.
+// 스피커 출력 (듀오벨: 저음 DAC + 고음 PWM → 하드웨어 저항 합산 → 모노 스피커) — J9
+//   A0(DAC) 사인파 저음 + D6~(PWM) 사각파 고음을 '동시' 출력해 한 스피커로 믹싱.
 //   UNO R4 WiFi 의 진짜 DAC 는 A0 한 개뿐 — 다른 용도로 쓰지 말 것.
-#define PIN_SPK_DAC A0 // DAC PCM 출력 (12bit, ALERT_RATE)
-#define PIN_SPK_PWM 6  // (구 DuoBell 고음 채널) 미사용 — PCM 재생으로 대체, 예비
+#define PIN_SPK_DAC A0 // DAC 사인 출력 — 저음 (TONE_FREQ_PRIMARY)
+#define PIN_SPK_PWM 6  // PWM 사각 출력 — 고음 (TONE_FREQ_SECONDARY)
 
 // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 //  3. 동작 파라미터
@@ -109,16 +116,39 @@ struct Btn { uint8_t pin; bool prev; unsigned long lastMs; };
 #define WARN_MAX_DURATION_MS                                                   \
   15000UL // 위험 시작 후 최대 N ms → 계속 감지돼도 강제 해제 (센서 재풀림 전까진 재발 억제)
 
-// 톤 주파수 — (구 DuoBell 2톤 합성용. PCM 재생으로 전환되며 미사용. 참고용 보존)
-//   스윕/벨 배음 등 음색은 이제 sound.py → alert_pcm.h 에서 결정된다.
-#define TONE_FREQ_PRIMARY 780    // (legacy) Hz — 저음
-#define TONE_FREQ_SECONDARY 2000 // (legacy) Hz — 고음
+// 톤 주파수 (듀오벨)
+#define TONE_FREQ_PRIMARY 780    // Hz — 저음, DAC 사인 (ANC 취약점 → 이어폰 뚫음)
+#define TONE_FREQ_SECONDARY 2000 // Hz — 고음, PWM 사각 (습관화 방지 → 귀 깨움)
 
-// 경고음 펄싱 (정적 드론 대신; 돌출/습관화 방지/in-ear ANC 회피)
-//   · 한 발 길이는 alert_pcm.h 의 ALERT_LEN/ALERT_RATE(=0.15s) 로 고정.
-//   · WARN_PULSE_OFF_MS = 한 발과 다음 발 사이 무음(gap). sound.py repeat(gap_sec) 대응.
-#define WARN_PULSE_OFF_MS   90   // 펄스 사이 무음 (ms) — 값↑이면 또박또박, ↓이면 다급
-#define WARN_PULSE_ON_MS   150   // (legacy) PCM 한 발 길이는 alert_pcm.h 가 결정 — 미사용
+// 경고음 펄싱 + 고음 스윕 (정적 드론 대신; 돌출/습관화 방지/in-ear ANC 회피)
+//   · 짧은 on/off 펄싱이 정적음보다 잘 알아차려지고, 음악의 순간 빈틈을 더 자주 통과.
+//   · 고음을 왕복 스윕하면 스펙트럼이 움직여 ANC 적응형 필터가 락온하기 어렵고
+//     습관화도 방지됨. 사각파 배음(6k/10kHz)이 in-ear ANC 침투대역을 함께 커버.
+#define WARN_PULSE_ON_MS   150   // 한 발 길이 (ms)
+#define WARN_PULSE_OFF_MS   90   // 펄스 사이 무음 (ms)
+#define WARN_HF_SWEEP        1   // (참고) 고음 스윕 플래그 — 듀티-PWM 음량 경로에선 미적용(고정 2kHz)
+#define WARN_SWEEP_TOP_HZ 3500   // 고음 스윕 상단 (Hz)
+#define WARN_SWEEP_MS      120   // 스윕 편도 시간 (ms)
+
+// ── 시간대 음량 스케줄 (NTP→KST 시각 기준) ──────────────────────────
+//   낮 = 교통소음 마스킹(Salford 보고서: masker 지배 영역 → 더 크게)으로 크게,
+//   밤 = 민원 회피로 작게. 값은 '소프트 신호레벨' 0~1.
+//   ⚠️ 절대 SPL/고막안전은 SW 로 보장 불가 → 설치 시 PAM8302 트리머(노즐)로 최종 캘리브레이션.
+//      (소프트 음량) × (앰프 노즐 게인) = 실제 음량 → 노즐 수동조절도 그대로 동작.
+#define VOL_DAY_START_MIN  (9 * 60)        // 낮 시작 09:00
+#define VOL_DAY_END_MIN    (17 * 60 + 30)  // 낮 끝   17:30
+#define VOL_DAY            0.85f           // 낮 음량 (크게, 헤드룸 남김)
+#define VOL_NIGHT          0.30f           // 밤 음량 (민원 회피)
+#define VOL_MAX            0.90f           // 소프트 상한 (클리핑/안전 헤드룸)
+#define NTP_TZ_OFFSET_SEC  (9 * 3600)      // KST = UTC+9
+
+// ── 웹 디스플레이 push (Vercel Next.js /api/status) ─────────────────
+//   1 로 켜면 평가 결과를 큰 화면 웹앱(web/)으로 POST. Vercel 배포 URL 을 호스트에 넣을 것.
+//   HTTPS(443) 라 push 1회당 TLS 핸드셰이크가 블로킹(~1~2s) → 간격 넉넉히(>=3s).
+#define ENABLE_WEB_PUSH          0
+#define WEB_PUSH_HOST            "your-app.vercel.app"  // 배포 후 실제 도메인으로
+#define WEB_PUSH_PATH            "/api/status"
+#define WEB_PUSH_MIN_INTERVAL_MS 3000UL
 
 // 디바운스
 #define DEBOUNCE_MS 20
