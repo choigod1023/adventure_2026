@@ -34,7 +34,6 @@
 #include <ArduinoJson.h>
 #include <U8g2lib.h>
 #include <Wire.h>
-#include <WiFiUdp.h>
 #include "analogWave.h"
 #include "FspTimer.h"   // 고음(D6) 소프트 음량용 듀티-PWM 타이머
 
@@ -183,12 +182,22 @@ bool hiPwmBegin() {
   if (!hiTimer.begin(TIMER_MODE_PERIODIC, type, ch, rate, 0.0f, hiISR)) return false;
   if (!hiTimer.setup_overflow_irq()) return false;
   if (!hiTimer.open())  return false;
-  if (!hiTimer.start()) return false;
+  // 평상시엔 정지(start 안 함). 위험 중 hiSet() 에서만 가동 → 비-경고 시 40kHz ISR 0
+  // → fetch/NTP 등 WiFi 통신 타이밍 방해 방지.
+  hiTimer.stop();
   return true;
 }
 
-void hiSet(float vol) { hiDuty = (uint16_t)(vol * (HI_RES / 2) + 0.5f); hiOn = true; } // 음량 0~1 → 듀티 0~50%
-void hiStop() { hiOn = false; digitalWrite(PIN_SPK_PWM, LOW); }
+void hiSet(float vol) {            // 음량 0~1 → 듀티 0~50%
+  hiDuty = (uint16_t)(vol * (HI_RES / 2) + 0.5f);
+  hiOn = true;
+  hiTimer.start();                 // 경고 동안만 ISR 가동
+}
+void hiStop() {
+  hiOn = false;
+  hiTimer.stop();                  // 무음 시 타이머 정지 (ISR 0)
+  digitalWrite(PIN_SPK_PWM, LOW);
+}
 
 // ─── 시간대 음량 (NTP 한 번 받고 millis 로 보간, KST) ───
 bool          timeSynced = false;
@@ -197,26 +206,23 @@ unsigned long msAtSync    = 0;
 
 void syncTimeNTP() {
   if (netState != NET_OK) return;
-  WiFiUDP udp;
-  udp.begin(2390);
-  byte pkt[48] = {0};
-  pkt[0] = 0b11100011;                  // LI=3, VN=4, Mode=3 (client)
-  udp.beginPacket("pool.ntp.org", 123);
-  udp.write(pkt, sizeof(pkt));
-  udp.endPacket();
-  unsigned long t0 = millis();
-  while (!udp.parsePacket()) {
-    if (millis() - t0 > 2000) { udp.stop(); Serial.println(F("[NTP] 실패")); return; }
+  // WiFiS3(ESP32-S3) 내장 시각 사용. ESP32 가 연결 후 SNTP 로 자동 동기화하므로
+  // UDP 포트123(핫스팟에서 자주 차단)을 직접 쓰지 않아 더 안정적. 동기화엔 몇 초 걸릴 수 있어 재시도.
+  unsigned long epoch = 0;
+  for (int i = 0; i < 12; i++) {
+    epoch = WiFi.getTime();
+    if (epoch > 1000000000UL) break;   // 유효(2001년 이후)
+    delay(500);
   }
-  udp.read(pkt, sizeof(pkt));
-  udp.stop();
-  unsigned long secs1900 = ((unsigned long)pkt[40] << 24) | ((unsigned long)pkt[41] << 16) |
-                           ((unsigned long)pkt[42] << 8)  |  (unsigned long)pkt[43];
-  epochAtSync = secs1900 - 2208988800UL + NTP_TZ_OFFSET_SEC;   // → KST epoch
+  if (epoch <= 1000000000UL) {
+    Serial.println(F("[시각] 동기화 실패 → 낮 음량 기본값"));
+    return;
+  }
+  epochAtSync = epoch + NTP_TZ_OFFSET_SEC;   // → KST epoch
   msAtSync    = millis();
   timeSynced  = true;
   unsigned long sod = epochAtSync % 86400UL;
-  Serial.print(F("[NTP] KST ")); Serial.print(sod / 3600); Serial.print(':');
+  Serial.print(F("[시각] KST ")); Serial.print(sod / 3600); Serial.print(':');
   Serial.println((sod % 3600) / 60);
 }
 
