@@ -156,8 +156,8 @@ struct Btn { uint8_t pin; bool prev; unsigned long lastMs; };
 // ── 웹 디스플레이 push (Vercel Next.js /api/status) ─────────────────
 //   1 로 켜면 평가 결과를 큰 화면 웹앱(web/)으로 POST. Vercel 배포 URL 을 호스트에 넣을 것.
 //   HTTPS(443) 라 push 1회당 TLS 핸드셰이크가 블로킹(~1~2s) → 간격 넉넉히(>=3s).
-#define ENABLE_WEB_PUSH          0
-#define WEB_PUSH_HOST            "your-app.vercel.app"  // 배포 후 실제 도메인으로
+#define ENABLE_WEB_PUSH          1
+#define WEB_PUSH_HOST            "adventure-2026-web.vercel.app"  // Vercel 배포 도메인 (https, 443)
 #define WEB_PUSH_PATH            "/api/status"
 #define WEB_PUSH_MIN_INTERVAL_MS 3000UL
 
