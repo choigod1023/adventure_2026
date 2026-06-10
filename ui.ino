@@ -122,36 +122,59 @@ const char* modeContextHint() {
 }
 
 // ════════════════════════════════════════════════════════════════
-//  UTF-8 가운데 정렬 + 자동 trim
+//  한글 가운데 정렬 — 글자마다 글리프 있는 폰트로 (korean1 우선, 없으면 korean2)
+//    · u8g2 의 korean1 폰트는 일부 음절(충/실/메/테…)을 빠뜨려 그 글자가
+//      안 그려짐(= "충무로역"→"무로역" 처럼 잘려 보임). korean1∪korean2 로 전부 커버.
+//    · ASCII/기호는 korean1(unifont)에 포함됨.
 // ════════════════════════════════════════════════════════════════
+static const uint8_t* const KFONT1 = u8g2_font_unifont_t_korean1;
+static const uint8_t* const KFONT2 = u8g2_font_unifont_t_korean2;
+
+// UTF-8 한 글자 디코드(1~3바이트), 포인터를 다음 글자로 전진
+static uint16_t utf8Next(const char** pp) {
+  const uint8_t* p = (const uint8_t*)(*pp);
+  uint8_t c = *p++;
+  uint16_t cp;
+  if (c < 0x80) {
+    cp = c;
+  } else if ((c & 0xE0) == 0xC0) {
+    cp = (uint16_t)(c & 0x1F) << 6;
+    cp |= (*p++ & 0x3F);
+  } else if ((c & 0xF0) == 0xE0) {
+    cp = (uint16_t)(c & 0x0F) << 12;
+    cp |= (uint16_t)(*p++ & 0x3F) << 6;
+    cp |= (*p++ & 0x3F);
+  } else {              // 4바이트(이모지 등) 미지원 → '?' 로
+    cp = '?';
+    p += 3;
+  }
+  *pp = (const char*)p;
+  return cp;
+}
+
+// 글자에 글리프가 있는 폰트 선택 (korean1 우선)
+static const uint8_t* fontForCp(uint16_t cp) {
+  u8g2.setFont(KFONT1);
+  if (u8g2_IsGlyph(u8g2.getU8g2(), cp)) return KFONT1;
+  return KFONT2;
+}
+
 void drawCenteredTrimmed(const char* text, int y) {
-  int w = u8g2.getUTF8Width(text);
-  if (w <= OLED_MAX_TEXT_WIDTH) {
-    int x = (OLED_WIDTH - w) / 2;
-    u8g2.drawUTF8(x, y, text);
-    return;
+  // 1) 글자별 폰트로 전체 폭 측정
+  int total = 0;
+  for (const char* p = text; *p;) {
+    uint16_t cp = utf8Next(&p);
+    u8g2.setFont(fontForCp(cp));
+    total += u8g2_GetGlyphWidth(u8g2.getU8g2(), cp);
   }
+  int x = (OLED_WIDTH - total) / 2;
+  if (x < 0) x = 0;            // 너무 길면 왼쪽 정렬(가장자리 클립)
 
-  static char buf[64];
-  int len = strlen(text);
-  if (len >= (int)sizeof(buf)) len = sizeof(buf) - 1;
-  strncpy(buf, text, len);
-  buf[len] = '\0';
-
-  while (len > 0) {
-    int cut = len - 1;
-    while (cut > 0 && (buf[cut] & 0xC0) == 0x80) cut--;
-    buf[cut] = '\0';
-
-    char tmp[68];
-    snprintf(tmp, sizeof(tmp), "%s...", buf);
-    if (u8g2.getUTF8Width(tmp) <= OLED_MAX_TEXT_WIDTH) {
-      int x = (OLED_WIDTH - u8g2.getUTF8Width(tmp)) / 2;
-      u8g2.drawUTF8(x, y, tmp);
-      return;
-    }
-    len = cut;
+  // 2) 글자별 폰트로 그리기
+  for (const char* p = text; *p;) {
+    uint16_t cp = utf8Next(&p);
+    u8g2.setFont(fontForCp(cp));
+    x += u8g2.drawGlyph(x, y, cp);
   }
-  u8g2.drawUTF8(56, y, "...");
 }
 

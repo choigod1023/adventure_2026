@@ -238,28 +238,31 @@ float currentVolume() {
 //   현재 displayData + 모드 + 위험여부를 JSON 으로 POST. (config.h ENABLE_WEB_PUSH)
 #if ENABLE_WEB_PUSH
 unsigned long lastWebPush = 0;
+unsigned long webPushCooldownUntil = 0;   // 실패 시 잠깐 쉬어 반복 블로킹 방지
 char          lastPushSig[100] = "";
 void pushStatus() {
   if (netState != NET_OK || !displayData.valid) return;
+  if ((long)(millis() - webPushCooldownUntil) < 0) return;   // 쿨다운 중
 
   // 내용 시그니처(모드|line1|line2|위험). 바뀌면 즉시, 안 바뀌면 하트비트 주기에만 전송.
-  //   → 블로킹 HTTPS POST 빈도를 줄여 OLED/버튼 끊김 최소화.
   char sig[100];
   snprintf(sig, sizeof(sig), "%s|%s|%s|%d",
            currentModeLabel(), displayData.line1, displayData.line2, dangerActive ? 1 : 0);
   bool changed = (strcmp(sig, lastPushSig) != 0);
   if (!changed && (millis() - lastWebPush < WEB_PUSH_MIN_INTERVAL_MS)) return;
   lastWebPush = millis();
-  strncpy(lastPushSig, sig, sizeof(lastPushSig) - 1);
-  lastPushSig[sizeof(lastPushSig) - 1] = '\0';
 
-  char body[160];
+  char body[220];   // 한글(UTF-8 멀티바이트)이라 넉넉히
   snprintf(body, sizeof(body),
     "{\"mode\":\"%s\",\"line1\":\"%s\",\"line2\":\"%s\",\"danger\":%s,\"ts\":%lu}",
     currentModeLabel(), displayData.line1, displayData.line2,
     dangerActive ? "true" : "false", millis());
 
+  // SPAT(HTTPS) 와 같은 sslSock 을 공유하므로, 이전 연결 잔재를 끊고 깨끗이 새로 연결.
+  // (stale 연결 재사용 → 응답 안 와서 HTTP_ERROR_TIMED_OUT(-3) 의 주원인)
+  sslSock.stop();
   HttpClient http(sslSock, WEB_PUSH_HOST, 443);
+  http.setHttpResponseTimeout(6000);   // 실패해도 6s 안에 빠짐(30s 행 방지)
   http.beginRequest();
   http.post(WEB_PUSH_PATH);
   http.sendHeader(F("Content-Type"), F("application/json"));
@@ -270,7 +273,14 @@ void pushStatus() {
   http.endRequest();
   int code = http.responseStatusCode();
   http.stop();
-  if (code != 200) { Serial.print(F("[WEB push] HTTP ")); Serial.println(code); }
+
+  if (code == 200) {
+    strncpy(lastPushSig, sig, sizeof(lastPushSig) - 1);
+    lastPushSig[sizeof(lastPushSig) - 1] = '\0';
+  } else {
+    Serial.print(F("[WEB push] 실패 code=")); Serial.println(code);
+    webPushCooldownUntil = millis() + 20000UL;   // 20s 쉬고 재시도
+  }
 }
 #endif
 
