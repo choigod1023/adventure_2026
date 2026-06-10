@@ -86,10 +86,10 @@ void fetchBus() {
 
   HttpClient http(plainSock, "ws.bus.go.kr", 80);
   http.setHttpResponseTimeout(8000);   // 30s 행 방지
-  String path = String("/api/rest/stationinfo/getStationByUid")
-              + "?serviceKey=" + BUS_API_KEY
-              + "&arsId="      + BUS_ARS_ID
-              + "&resultType=json";
+  char path[220];   // String 대신 고정 버퍼 → 힙 단편화 방지
+  snprintf(path, sizeof(path),
+           "/api/rest/stationinfo/getStationByUid?serviceKey=%s&arsId=%s&resultType=json",
+           BUS_API_KEY, BUS_ARS_ID);
 
   http.beginRequest();
   http.get(path);
@@ -205,8 +205,10 @@ void fetchSubway() {
   http.setHttpResponseTimeout(8000);   // 30s 행 방지
   // 행수 20: 노선/방향 필터(1004 하행) 가 5행 안에 안 들어오는 경우 대비.
   //   스트리밍 필터 파싱이라 행수 늘려도 메모리 영향 없음.
-  String path = String("/api/subway/") + SUBWAY_API_KEY
-              + "/json/realtimeStationArrival/0/20/" + SUBWAY_STATION_ENC;
+  char path[140];   // String 대신 고정 버퍼
+  snprintf(path, sizeof(path),
+           "/api/subway/%s/json/realtimeStationArrival/0/20/%s",
+           SUBWAY_API_KEY, SUBWAY_STATION_ENC);
 
   http.beginRequest();
   http.get(path);
@@ -321,15 +323,13 @@ void fetchSpat() {
   http.setHttpResponseTimeout(8000);   // t-data 가 느리거나 500 일 때 30s 행 방지
 
   // numOfRows=1 필수 — SRAM 보호 (응답이 수십 KB 가능)
-  String path = String("/apig/apiman-gateway/tapi/v2xSignalPhaseTimingInformation/1.0")
-              + "?apikey="     + SPAT_API_KEY
-              + "&type=json"
-              + "&pageNo=1"
-              + "&numOfRows=1";
-  if (strlen(SPAT_ITST_ID) > 0) {
-    path += "&itstId=";
-    path += SPAT_ITST_ID;
-  }
+  char path[220];   // String 대신 고정 버퍼
+  snprintf(path, sizeof(path),
+           "/apig/apiman-gateway/tapi/v2xSignalPhaseTimingInformation/1.0"
+           "?apikey=%s&type=json&pageNo=1&numOfRows=1%s%s",
+           SPAT_API_KEY,
+           strlen(SPAT_ITST_ID) > 0 ? "&itstId=" : "",
+           SPAT_ITST_ID);
 
   http.beginRequest();
   http.get(path);
