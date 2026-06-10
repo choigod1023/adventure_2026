@@ -85,6 +85,7 @@ void fetchBus() {
   Serial.println(F("\n[BUS API]"));
 
   HttpClient http(plainSock, "ws.bus.go.kr", 80);
+  http.setHttpResponseTimeout(8000);   // 30s 행 방지
   String path = String("/api/rest/stationinfo/getStationByUid")
               + "?serviceKey=" + BUS_API_KEY
               + "&arsId="      + BUS_ARS_ID
@@ -104,11 +105,21 @@ void fetchBus() {
     return;
   }
 
-  String body = http.responseBody();
-  http.stop();
+  // ⚠️ 큰 정류장(노선 多)은 응답이 10KB+ → String+전체파싱이 RAM 초과(NoMemory) → "JSON 오류".
+  //    필요 필드만 스트림에서 필터 파싱 → 응답 크기와 무관하게 메모리 일정.
+  http.skipResponseHeaders();
+  JsonDocument filter;
+  filter["msgHeader"]["headerCd"] = true;
+  filter["msgBody"]["itemList"][0]["stNm"]    = true;
+  filter["msgBody"]["itemList"][0]["rtNm"]    = true;
+  filter["msgBody"]["itemList"][0]["arrmsg1"] = true;
 
   JsonDocument doc;
-  if (deserializeJson(doc, body)) {
+  DeserializationError err =
+      deserializeJson(doc, http, DeserializationOption::Filter(filter));
+  http.stop();
+  if (err) {
+    Serial.print(F("[JSON] ")); Serial.println(err.c_str());
     setDisplayError("BUS", "JSON 오류");
     return;
   }
@@ -191,8 +202,11 @@ void fetchSubway() {
   Serial.println(F("\n[SUBWAY API]"));
 
   HttpClient http(plainSock, "swopenAPI.seoul.go.kr", 80);
+  http.setHttpResponseTimeout(8000);   // 30s 행 방지
+  // 행수 20: 노선/방향 필터(1004 하행) 가 5행 안에 안 들어오는 경우 대비.
+  //   스트리밍 필터 파싱이라 행수 늘려도 메모리 영향 없음.
   String path = String("/api/subway/") + SUBWAY_API_KEY
-              + "/json/realtimeStationArrival/0/5/" + SUBWAY_STATION_ENC;
+              + "/json/realtimeStationArrival/0/20/" + SUBWAY_STATION_ENC;
 
   http.beginRequest();
   http.get(path);
@@ -208,11 +222,20 @@ void fetchSubway() {
     return;
   }
 
-  String body = http.responseBody();
-  http.stop();
+  http.skipResponseHeaders();
+  JsonDocument filter;
+  filter["errorMessage"]["code"] = true;
+  filter["realtimeArrivalList"][0]["subwayId"] = true;
+  filter["realtimeArrivalList"][0]["updnLine"] = true;
+  filter["realtimeArrivalList"][0]["arvlMsg2"] = true;
+  filter["realtimeArrivalList"][0]["barvlDt"]  = true;
 
   JsonDocument doc;
-  if (deserializeJson(doc, body)) {
+  DeserializationError err =
+      deserializeJson(doc, http, DeserializationOption::Filter(filter));
+  http.stop();
+  if (err) {
+    Serial.print(F("[JSON] ")); Serial.println(err.c_str());
     setDisplayError("SUBWAY", "JSON 오류");
     return;
   }
@@ -295,6 +318,7 @@ void fetchSpat() {
   Serial.println(F("\n[SPAT API]"));
 
   HttpClient http(sslSock, "t-data.seoul.go.kr", 443);
+  http.setHttpResponseTimeout(8000);   // t-data 가 느리거나 500 일 때 30s 행 방지
 
   // numOfRows=1 필수 — SRAM 보호 (응답이 수십 KB 가능)
   String path = String("/apig/apiman-gateway/tapi/v2xSignalPhaseTimingInformation/1.0")
