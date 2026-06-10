@@ -378,6 +378,9 @@ void fetchSpat() {
            strlen(SPAT_ITST_ID) > 0 ? "&itstId=" : "",
            SPAT_ITST_ID);
 
+  Serial.print(F("  [URL] https://t-data.seoul.go.kr"));
+  Serial.println(path);
+
   http.beginRequest();
   http.get(path);
   http.sendHeader(F("Accept"), F("application/json"));
