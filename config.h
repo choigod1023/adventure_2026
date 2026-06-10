@@ -159,7 +159,7 @@ struct Btn { uint8_t pin; bool prev; unsigned long lastMs; };
 #define ENABLE_WEB_PUSH          1
 #define WEB_PUSH_HOST            "adventure-2026-web.vercel.app"  // Vercel 배포 도메인 (https, 443)
 #define WEB_PUSH_PATH            "/api/status"
-#define WEB_PUSH_MIN_INTERVAL_MS 3000UL
+#define WEB_PUSH_MIN_INTERVAL_MS 10000UL  // 내용 변화 없을 때 하트비트 주기(블로킹 잦으면 OLED 끊김 → 길게)
 
 // 디바운스
 #define DEBOUNCE_MS 20

@@ -238,13 +238,20 @@ float currentVolume() {
 //   현재 displayData + 모드 + 위험여부를 JSON 으로 POST. (config.h ENABLE_WEB_PUSH)
 #if ENABLE_WEB_PUSH
 unsigned long lastWebPush = 0;
-bool          lastPushDanger = false;
+char          lastPushSig[100] = "";
 void pushStatus() {
   if (netState != NET_OK || !displayData.valid) return;
-  bool changed = (dangerActive != lastPushDanger);
+
+  // 내용 시그니처(모드|line1|line2|위험). 바뀌면 즉시, 안 바뀌면 하트비트 주기에만 전송.
+  //   → 블로킹 HTTPS POST 빈도를 줄여 OLED/버튼 끊김 최소화.
+  char sig[100];
+  snprintf(sig, sizeof(sig), "%s|%s|%s|%d",
+           currentModeLabel(), displayData.line1, displayData.line2, dangerActive ? 1 : 0);
+  bool changed = (strcmp(sig, lastPushSig) != 0);
   if (!changed && (millis() - lastWebPush < WEB_PUSH_MIN_INTERVAL_MS)) return;
   lastWebPush = millis();
-  lastPushDanger = dangerActive;
+  strncpy(lastPushSig, sig, sizeof(lastPushSig) - 1);
+  lastPushSig[sizeof(lastPushSig) - 1] = '\0';
 
   char body[160];
   snprintf(body, sizeof(body),
