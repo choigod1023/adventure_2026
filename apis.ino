@@ -285,11 +285,6 @@ void fetchSubway() {
   DeserializationError err =
       deserializeJson(doc, blockingHttp, DeserializationOption::Filter(filter));
   http.stop();
-
-  Serial.print(F("[DEBUG SUBWAY JSON] "));
-  serializeJson(doc, Serial);
-  Serial.println();
-
   if (err) {
     Serial.print(F("[JSON] ")); Serial.println(err.c_str());
     setDisplayError("SUBWAY", "JSON 오류");
@@ -317,21 +312,12 @@ void fetchSubway() {
     const char* m   = item["arvlMsg2"] | "";
     const char* sid = item["subwayId"] | "?";
     const char* upd = item["updnLine"] | "";
-    int sec         = item["barvlDt"]  | 9999;
+    const char* secStr = item["barvlDt"].as<const char*>();
+    int sec         = secStr ? atoi(secStr) : 9999;
 
-    Serial.print(F("Item - sid: ")); Serial.print(sid);
-    Serial.print(F(", upd: ")); Serial.print(upd);
-    Serial.print(F(", sec: ")); Serial.println(sec);
-
-    if (SUBWAY_FILTER_LINE[0] && strcmp(sid, SUBWAY_FILTER_LINE) != 0) {
-      Serial.println(F("  -> Skip: Line mismatch"));
-      continue;
-    }
-    if (SUBWAY_FILTER_DIR[0]  && !strstr(upd, SUBWAY_FILTER_DIR)) {
-      Serial.println(F("  -> Skip: Dir mismatch"));
-      continue;
-    }
-    Serial.println(F("  -> MATCHED!"));
+    // 노선/방향 필터 (config.h SUBWAY_FILTER_LINE/DIR, 빈 문자열이면 통과)
+    if (SUBWAY_FILTER_LINE[0] && strcmp(sid, SUBWAY_FILTER_LINE) != 0) continue;
+    if (SUBWAY_FILTER_DIR[0]  && !strstr(upd, SUBWAY_FILTER_DIR))      continue;
 
     // 위험: 다음 역(=이 역)까지 30초 미만, "곧 도착", "당역 도착/진입".
     // ⚠️ "전역(前驛)" = 앞 역 (1~3분 거리) → 위험 아님. 절대 매칭하지 말 것.
