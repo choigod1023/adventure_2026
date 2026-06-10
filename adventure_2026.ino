@@ -508,6 +508,7 @@ void updateDangerState(bool detected) {
 //    · 절대 음량은 PAM8302 트리머(노즐)로 최종 조정 — 소프트 음량과 곱해짐
 // ════════════════════════════════════════════════════════════════
 void warnOn() {
+  if (warnAudioOn) return;                      // 무분별한 타이머/DAC 재시작 방지 (스피커 출력 크기 제어 보장)
   float vol = currentVolume();                  // 시간대(낮/밤) 음량 0~1
   wave.amplitude(vol);                          // 저음 780Hz 사인(DAC) — 음량 적용
   hiSet(vol);                                   // 고음 2kHz(D6 듀티-PWM) — 음량 적용

@@ -408,6 +408,10 @@ void fetchSpat() {
     deserializeJson(doc, blockingHttp, DeserializationOption::Filter(filter));
   http.stop();
 
+  Serial.print(F("[DEBUG SPAT JSON] "));
+  serializeJson(doc, Serial);
+  Serial.println();
+
   if (err) {
     Serial.print(F("[JSON 파싱 오류] ")); Serial.println(err.c_str());
     setDisplayError("CITS", "JSON 오류");
